@@ -1,0 +1,28 @@
+body { font-family: Georgia, serif; line-height: 1.4; }
+h1.story-title { font-size: 1.5em; text-align: center; margin: 1em 0 0.5em; }
+h1.t-head { font-size: 0.85em; font-weight: bold; text-align: left; color: #444; margin: 0 0 0.8em; padding-bottom: 0.25em; border-bottom: 1px solid #888; }
+.story-meta, .story-link { text-align: center; font-size: 0.85em; color: #444; margin: 0.3em 0; }
+.story-text { margin: 1em 0; }
+.story-text h2 { font-size: 1.2em; margin: 1.2em 0 0.5em; }
+.story-text h3 { font-size: 1.05em; margin: 1em 0 0.4em; }
+.story-text p { margin: 0.6em 0; text-indent: 0; }
+img { max-width: 100%; height: auto; }
+figure { margin: 1em 0; }
+figcaption { font-size: 0.8em; color: #555; font-style: italic; }
+.c { margin-top: 0.9em; }
+.d0 { margin-left: 0; }
+.d1 { margin-left: 0.8em; } .d2 { margin-left: 1.6em; } .d3 { margin-left: 2.4em; }
+.d4 { margin-left: 3.2em; } .d5 { margin-left: 4em; }
+.d1, .d2, .d3, .d4, .d5 { border-left: 2px solid #bbb; padding-left: 0.5em; } /* progressive enhancement */
+.c-head { font-size: 0.8em; color: #333; margin: 0 0 0.15em 0; }
+.c-info { color: #777; }
+.c-skip { color: #777; font-weight: normal; text-decoration: none; }
+.c-hd { font-weight: bold; margin: 0.6em 0 0.3em; }
+.c-body p { margin: 0.4em 0; text-indent: 0; }
+pre { font-family: "Courier New", monospace; font-size: 0.75em; white-space: pre-wrap;
+      word-wrap: break-word; margin: 0.5em 0; padding: 0.3em; background-color: #f2f2f2; }
+code { font-family: "Courier New", monospace; font-size: 0.85em; }
+blockquote { margin: 0.5em 0 0.5em 1em; font-style: italic; }
+table { border-collapse: collapse; margin: 1em 0; font-size: 0.8em; }
+th, td { border: 1px solid #999; padding: 0.15em 0.4em; text-align: left; }
+a { color: inherit; }

@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "kindlecast",
+  "version": "0.2.0",
+  "description": "Send articles and discussion threads to Kindle",
+  "permissions": ["nativeMessaging", "activeTab", "scripting"],
+  "icons": {
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "kindlecast",
+    "default_icon": {
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
+  },
+  "background": {
+    "service_worker": "background.js"
+  }
+}

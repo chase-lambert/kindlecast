@@ -1,0 +1,23 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>kindlecast</title>
+    <style>
+      body { width: 280px; margin: 0; padding: 14px; font: 13px system-ui, sans-serif; color: #202124; }
+      h1 { font-size: 15px; margin: 0 0 10px; }
+      button { width: 100%; margin-top: 8px; padding: 8px 10px; border: 1px solid #c9c9c9; border-radius: 6px; background: #fff; font: inherit; cursor: pointer; }
+      button.primary { background: #202124; color: #fff; border-color: #202124; }
+      button:disabled { opacity: 0.5; cursor: default; }
+      #status { min-height: 18px; margin-top: 10px; color: #555; overflow-wrap: anywhere; }
+    </style>
+  </head>
+  <body>
+    <h1>kindlecast</h1>
+    <button id="send" class="primary">Send to Kindle</button>
+    <button id="download">Download only</button>
+    <div id="status"></div>
+    <script src="popup.js"></script>
+  </body>
+</html>

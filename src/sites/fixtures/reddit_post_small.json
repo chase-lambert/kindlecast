@@ -1,0 +1,65 @@
+[
+  {
+    "data": {
+      "children": [
+        {
+          "kind": "t3",
+          "data": {
+            "id": "abc123",
+            "title": "A small Reddit thread",
+            "author": "alice",
+            "selftext_html": "<div class=\"md\"><p>Post text</p></div>",
+            "url": "https://www.reddit.com/r/rust/comments/abc123/a_small_reddit_thread/",
+            "permalink": "/r/rust/comments/abc123/a_small_reddit_thread/",
+            "score": 42,
+            "num_comments": 3,
+            "created_utc": 1700000000.0,
+            "subreddit": "rust"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "data": {
+      "children": [
+        {
+          "kind": "t1",
+          "data": {
+            "author": "bob",
+            "body_html": "<div class=\"md\"><p>First &lt; second</p></div>",
+            "created_utc": 1700000001.0,
+            "replies": {
+              "data": {
+                "children": [
+                  {
+                    "kind": "t1",
+                    "data": {
+                      "author": "carol",
+                      "body_html": "<div class=\"md\"><p>Reply</p></div>",
+                      "created_utc": 1700000002.0,
+                      "replies": ""
+                    }
+                  },
+                  {
+                    "kind": "more",
+                    "data": { "count": 4 }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "kind": "t1",
+          "data": {
+            "author": "[deleted]",
+            "body_html": "",
+            "created_utc": 1700000003.0,
+            "replies": ""
+          }
+        }
+      ]
+    }
+  }
+]

@@ -1,0 +1,87 @@
+{
+  "id": 126809,
+  "author": "pg",
+  "children": [
+    {
+      "id": 1,
+      "author": "alice",
+      "children": [
+        {
+          "id": 2,
+          "author": "bob",
+          "children": [
+            {
+              "id": 3,
+              "author": "carol",
+              "children": [],
+              "created_at": "2008-03-01T12:03:00Z",
+              "created_at_i": 1204372980,
+              "parent_id": 2,
+              "points": null,
+              "story_id": 126809,
+              "text": "third level",
+              "title": null,
+              "type": "comment",
+              "url": null
+            }
+          ],
+          "created_at": "2008-03-01T12:02:00Z",
+          "created_at_i": 1204372920,
+          "parent_id": 1,
+          "points": null,
+          "story_id": 126809,
+          "text": "<p>reply</p>",
+          "title": null,
+          "type": "comment",
+          "url": null
+        }
+      ],
+      "created_at": "2008-03-01T12:01:00Z",
+      "created_at_i": 1204372860,
+      "parent_id": 126809,
+      "points": null,
+      "story_id": 126809,
+      "text": "first",
+      "title": null,
+      "type": "comment",
+      "url": null
+    },
+    {
+      "id": 4,
+      "author": null,
+      "children": [],
+      "created_at": "2008-03-01T12:04:00Z",
+      "created_at_i": 1204373040,
+      "parent_id": 126809,
+      "points": null,
+      "story_id": 126809,
+      "text": null,
+      "title": null,
+      "type": "comment",
+      "url": null
+    },
+    {
+      "id": 5,
+      "author": "dave",
+      "children": [],
+      "created_at": "2008-03-01T12:05:00Z",
+      "created_at_i": 1204373100,
+      "parent_id": 126809,
+      "points": null,
+      "story_id": 126809,
+      "text": "<pre><code>x</code></pre>",
+      "title": null,
+      "type": "comment",
+      "url": null
+    }
+  ],
+  "created_at": "2008-03-01T12:00:00Z",
+  "created_at_i": 1204372800,
+  "parent_id": null,
+  "points": 42,
+  "story_id": null,
+  "text": null,
+  "title": "Example Thread",
+  "type": "story",
+  "url": "https://example.com/post"
+}
