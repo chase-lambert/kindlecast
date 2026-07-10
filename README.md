@@ -19,16 +19,7 @@ Kindles strip all interactivity from documents, so you can't collapse a comment 
 
 Comment ordering matches the site: for HN, ranked order comes from the official Firebase API (see Notes).
 
-## CLI
-
-```sh
-cargo run -- 126809 --no-email
-cargo run -- 'https://news.ycombinator.com/item?id=126809'
-cargo run -- 'https://lobste.rs/s/abc123/title' --no-email
-cargo run -- 'https://example.com/article' --no-email --keep-html
-```
-
-The default mode saves to `~/Downloads` and emails the EPUB. Use `--no-email` to build only, or `--email-only` to avoid keeping a copy in Downloads.
+## Install
 
 Pandoc is required:
 
@@ -36,13 +27,30 @@ Pandoc is required:
 sudo apt install pandoc   # or: dnf install pandoc / brew install pandoc
 ```
 
+Then build and install the binary:
+
+```sh
+cargo install --path .
+```
+
+## CLI
+
+```sh
+kindlecast 126809 --no-email
+kindlecast 'https://news.ycombinator.com/item?id=126809'
+kindlecast 'https://lobste.rs/s/abc123/title' --no-email
+kindlecast 'https://example.com/article' --no-email --keep-html
+```
+
+The default mode saves to `~/Downloads` and emails the EPUB. Use `--no-email` to build only, or `--email-only` to avoid keeping a copy in Downloads.
+
 ## Config
 
 ```sh
 kindlecast init
 ```
 
-This writes `~/.config/kindlecast/config.toml` with mode `0600` and copies `kindle.css` for local tuning.
+This writes `~/.config/kindlecast/config.toml` (permissions `0600` — readable only by you, since it holds an email password) and copies `kindle.css` for local tuning.
 
 Set:
 
@@ -54,14 +62,13 @@ The `from_email` address must be on Amazon's Approved Personal Document E-mail L
 
 ## Native Host Install
 
-Install the binary to a stable path first, because browser native-messaging manifests hard-code the executable path:
+Browser native-messaging manifests hard-code the executable path, so use the `cargo install`ed binary (a stable path), not a `target/` build:
 
 ```sh
-cargo install --path .
 kindlecast install --extension-id CHROME_EXTENSION_ID
 ```
 
-The installer writes manifests for Google Chrome and Chromium under `~/.config`. Pass `--firefox-id kindlecast@chaselambert.dev` to also write the Firefox manifest.
+The installer writes manifests for Google Chrome and Chromium under `~/.config`. For Firefox, pass `--firefox-id` with the extension ID you set as `browser_specific_settings.gecko.id` in the extension manifest (e.g. `--firefox-id kindlecast@example.com`) to also write the Firefox manifest.
 
 Flatpak browsers generally cannot spawn native hosts from the host filesystem; use the RPM/deb browser build for this extension.
 
