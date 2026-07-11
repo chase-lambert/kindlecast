@@ -6,9 +6,6 @@ let currentTabId = null;
 
 const THREAD_SITES = [
   /^https?:\/\/news\.ycombinator\.com\/item\?/,
-  /^https?:\/\/(?:www\.|old\.|new\.)?reddit\.com\/(?:r\/[^/]+\/)?comments\/[a-z0-9]+/i,
-  /^https?:\/\/redd\.it\/[a-z0-9]+/i,
-  /^https?:\/\/(?:www\.|old\.|new\.)?reddit\.com\/r\/[^/]+\/s\/[a-z0-9]+(?:[/?#].*)?$/i,
   /^https?:\/\/lobste\.rs\/s\/[a-z0-9]+/i,
 ];
 

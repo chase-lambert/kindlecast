@@ -76,13 +76,15 @@ Flatpak browsers generally cannot spawn native hosts from the host filesystem; u
 
 Load `extension/` as an unpacked Chrome extension, copy its generated extension ID, then run `kindlecast install --extension-id ...`.
 
-The extension enables actions on regular `http(s)` pages. For HN, Reddit, and Lobsters it sends only the URL and lets the native host use the clean JSON APIs. For generic articles it also captures the rendered page DOM, which helps on JavaScript-heavy, bot-walled, or logged-in pages; if capture is blocked, the host falls back to fetching the URL directly.
+The extension enables actions on regular `http(s)` pages. For HN and Lobsters it sends only the URL and lets the native host use the clean JSON APIs. For Reddit, it captures the rendered page DOM because Reddit's public JSON/HTML endpoints commonly return HTTP 403 from unauthenticated clients; the native host parses the visible post and comment tree directly from the captured HTML. For generic articles it also captures the rendered page DOM, which helps on JavaScript-heavy, bot-walled, or logged-in pages; if capture is blocked, the host falls back to fetching the URL directly.
+
+Reddit's captured-DOM extraction only includes comments already visible in the browser; it does not expand "load more" links or fetch additional content. The CLI still depends on Reddit's public JSON API, so Reddit may be unreachable from the command line on networks where the JSON endpoint returns 403. Use the browser extension for reliable Reddit send.
 
 ## Notes
 
 HN comment content comes from Algolia (one request for the whole tree), but Algolia's ordering is chronological, so kindlecast fetches the official Firebase API's ranked `kids` arrays for branches with 2+ replies and reorders to match the page. Branches whose lookup fails keep chronological order. Algolia prunes deleted/dead comments, so the rendered count can differ from HN's displayed count.
 
-Reddit public JSON may return 403 from some networks. The adapter uses `raw_json=1` and a descriptive user agent, but Reddit still controls access.
+Reddit public JSON may return 403 from some networks. The browser extension captures the rendered discussion DOM instead, parsing old Reddit (`thing` classes) and current desktop (`shreddit-*` elements) layouts to produce the Kindle discussion. If captured parsing fails, the JSON API is tried as a compatibility fallback. Only comments already rendered in the captured page are included; "load more" placeholders are reported but not expanded. Login, consent, and bot-block pages are rejected rather than silently turned into generic articles. CLI Reddit support remains API-only and will show a clear error when the JSON endpoint is unavailable — use the browser extension as the supported Reddit path.
 
 Rendering goes through pandoc (`html → epub3`, `--split-level=1`), so every `<h1>` becomes a chapter — that's the mechanism behind per-thread chapters. Pandoc's HTML reader drops attributes from `<p>` tags, which is why classed block lines in `render.rs` are `<div>`s.
 

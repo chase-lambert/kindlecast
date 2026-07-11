@@ -732,6 +732,7 @@ dependencies = [
  "chrono",
  "clap",
  "dirs",
+ "dom_query",
  "dom_smoothie",
  "html-escape",
  "lettre",

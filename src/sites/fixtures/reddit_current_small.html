@@ -1,0 +1,24 @@
+<html><head><title>Current Reddit Test</title></head><body>
+<shreddit-post post-id="xyz789" permalink="/r/programming/comments/xyz789/test_post/"
+  post-title="Test Reddit Post" author="testuser" score="123"
+  created-timestamp="2024-01-15T10:30:00.000Z"
+  subreddit-prefixed-name="r/programming"
+  content-href="/r/programming/comments/xyz789/test_post/">
+  <div slot="text-body"><p>Self-post body</p></div>
+</shreddit-post>
+<shreddit-comment author="commenter1" depth="0" created-timestamp="2024-01-15T11:00:00.000Z">
+  <div slot="comment"><p>Top-level reply</p></div>
+</shreddit-comment>
+<shreddit-comment author="commenter2" depth="1" created-timestamp="2024-01-15T11:30:00.000Z">
+  <div slot="comment"><p>Nested reply</p></div>
+</shreddit-comment>
+<shreddit-comment author="[deleted]" depth="0" created-timestamp="2024-01-15T12:00:00.000Z">
+  <div slot="comment"></div>
+</shreddit-comment>
+<shreddit-comment author="replier" depth="1" created-timestamp="2024-01-15T12:30:00.000Z">
+  <div slot="comment"><p>Reply to deleted</p></div>
+</shreddit-comment>
+<shreddit-comment-tree more-comments-count="3">
+  <button aria-label="3 more replies">3 more replies</button>
+</shreddit-comment-tree>
+</body></html>
