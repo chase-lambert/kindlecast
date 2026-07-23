@@ -6,7 +6,10 @@ use lettre::{Message, SmtpTransport, Transport};
 use std::fs;
 use std::path::Path;
 
+pub const MAX_EMAIL_EPUB_BYTES: u64 = 20 * 1024 * 1024;
+
 pub fn send_epub(config: &Config, title: &str, source: &str, epub_path: &Path) -> Result<()> {
+    ensure_within_email_budget(epub_path)?;
     let epub_bytes = fs::read(epub_path)
         .with_context(|| format!("failed to read EPUB {}", epub_path.display()))?;
     let filename = epub_path
@@ -35,6 +38,65 @@ pub fn send_epub(config: &Config, title: &str, source: &str, epub_path: &Path) -
         .build();
     mailer
         .send(&email)
-        .context("SMTP send failed; check app password and approved sender list")?;
+        .context("SMTP send failed; check the network, Gmail app password, and SMTP settings")?;
     Ok(())
+}
+
+pub fn epub_size(epub_path: &Path) -> Result<u64> {
+    Ok(fs::metadata(epub_path)
+        .with_context(|| format!("failed to inspect EPUB {}", epub_path.display()))?
+        .len())
+}
+
+pub fn ensure_within_email_budget(epub_path: &Path) -> Result<u64> {
+    let size = epub_size(epub_path)?;
+    if size > MAX_EMAIL_EPUB_BYTES {
+        anyhow::bail!(oversized_epub_diagnosis(size));
+    }
+    Ok(size)
+}
+
+pub fn oversized_epub_diagnosis(size: u64) -> String {
+    format!(
+        "EPUB is {} (email limit {}); SMTP was not attempted",
+        human_size(size),
+        human_size(MAX_EMAIL_EPUB_BYTES)
+    )
+}
+
+pub fn human_size(bytes: u64) -> String {
+    format!("{:.2} MiB", bytes as f64 / (1024 * 1024) as f64)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::Config;
+    use std::io::{Seek, SeekFrom, Write};
+    use tempfile::NamedTempFile;
+
+    #[test]
+    fn oversized_epub_is_rejected_before_message_or_smtp_configuration() {
+        let mut epub = NamedTempFile::new().unwrap();
+        epub.as_file_mut()
+            .seek(SeekFrom::Start(MAX_EMAIL_EPUB_BYTES))
+            .unwrap();
+        epub.write_all(&[0]).unwrap();
+        let deliberately_invalid = Config {
+            kindle_email: "not a mailbox".to_string(),
+            from_email: "also not a mailbox".to_string(),
+            smtp_host: String::new(),
+            smtp_username: String::new(),
+            smtp_password: String::new(),
+            output_dir: String::new(),
+            max_indent_depth: 1,
+        };
+
+        let error = send_epub(&deliberately_invalid, "Oversized", "test", epub.path()).unwrap_err();
+        let message = format!("{error:#}");
+        assert!(message.contains("SMTP was not attempted"));
+        assert!(message.contains("20.00 MiB"));
+        assert!(!message.contains("mailbox"));
+        assert!(!message.contains("relay"));
+    }
 }

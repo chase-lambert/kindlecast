@@ -2,6 +2,7 @@ mod cli;
 mod config;
 mod email;
 mod epub;
+mod images;
 mod install;
 mod model;
 mod native_host;
@@ -13,6 +14,7 @@ use clap::Parser;
 use cli::{Cli, Commands, RunArgs};
 use config::Config;
 use model::ThreadKind;
+use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
 use tempfile::TempDir;
@@ -96,13 +98,14 @@ pub fn run_job(options: JobOptions, progress: &dyn Fn(&str, &str)) -> Result<Job
         }
     };
 
-    progress("building", "running pandoc");
     let build = epub::build_epub(
         &thread,
         &css,
         &epub_target_dir,
         max_depth,
         options.keep_html && !options.email_only,
+        &options.url,
+        &|detail| progress("building", detail),
     )?;
     if let Some(path) = &build.html_path {
         progress("building", &format!("kept HTML at {}", path.display()));
@@ -110,6 +113,26 @@ pub fn run_job(options: JobOptions, progress: &dyn Fn(&str, &str)) -> Result<Job
 
     let emailed = if should_email {
         let cfg = config.context("email config missing; run kindlecast init")?;
+        let epub_size = email::epub_size(&build.epub_path)?;
+        if epub_size > email::MAX_EMAIL_EPUB_BYTES {
+            let diagnosis = email::oversized_epub_diagnosis(epub_size);
+            if options.email_only {
+                let recovery = preserve_email_only_epub(&build.epub_path, &cfg.output_dir());
+                match recovery {
+                    Ok(path) => bail!(
+                        "{diagnosis}. Saved the completed book to {}. Upload it at https://www.amazon.com/sendtokindle",
+                        path.display()
+                    ),
+                    Err(error) => bail!(
+                        "{diagnosis}. The temporary book could not be preserved: {error:#}. Build again with --no-email or use Send to Kindle"
+                    ),
+                }
+            }
+            bail!(
+                "{diagnosis}. The completed book remains at {}. Upload it at https://www.amazon.com/sendtokindle",
+                build.epub_path.display()
+            );
+        }
         progress("emailing", "sending EPUB to Kindle");
         email::send_epub(&cfg, &thread.story.title, &thread.source, &build.epub_path)?;
         true
@@ -123,6 +146,37 @@ pub fn run_job(options: JobOptions, progress: &dyn Fn(&str, &str)) -> Result<Job
         file: build.epub_path,
         emailed,
     })
+}
+
+fn preserve_email_only_epub(epub_path: &Path, output_dir: &Path) -> Result<PathBuf> {
+    fs::create_dir_all(output_dir)
+        .with_context(|| format!("failed to create {}", output_dir.display()))?;
+    let filename = epub_path
+        .file_name()
+        .context("temporary EPUB has no filename")?;
+    let mut destination = output_dir.join(filename);
+    if destination.exists() {
+        let stem = epub_path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or("kindlecast");
+        let extension = epub_path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .unwrap_or("epub");
+        destination = (1..=999)
+            .map(|index| output_dir.join(format!("{stem}-email-recovery-{index}.{extension}")))
+            .find(|candidate| !candidate.exists())
+            .context("no available recovery filename")?;
+    }
+    fs::copy(epub_path, &destination).with_context(|| {
+        format!(
+            "failed to copy {} to {}",
+            epub_path.display(),
+            destination.display()
+        )
+    })?;
+    Ok(destination)
 }
 
 fn run_cli(args: RunArgs) -> Result<()> {
@@ -188,6 +242,10 @@ fn fetch_summary(thread: &model::Thread) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
+    use tempfile::tempdir;
+
     #[test]
     fn json_url_with_cli_flag_is_not_native_host_invocation() {
         let args = vec![
@@ -207,5 +265,29 @@ mod tests {
         ];
 
         assert!(super::is_native_host_invocation(&args));
+    }
+
+    #[test]
+    fn email_only_recovery_preserves_book_without_overwriting() {
+        let temp = tempdir().unwrap();
+        let build_dir = temp.path().join("build");
+        let output_dir = temp.path().join("downloads");
+        fs::create_dir_all(&build_dir).unwrap();
+        fs::create_dir_all(&output_dir).unwrap();
+        let epub_path = build_dir.join("article.epub");
+        fs::write(&epub_path, b"new book").unwrap();
+        fs::write(output_dir.join("article.epub"), b"existing book").unwrap();
+
+        let recovered = super::preserve_email_only_epub(&epub_path, &output_dir).unwrap();
+
+        assert_eq!(
+            recovered.file_name().unwrap(),
+            "article-email-recovery-1.epub"
+        );
+        assert_eq!(fs::read(recovered).unwrap(), b"new book");
+        assert_eq!(
+            fs::read(output_dir.join("article.epub")).unwrap(),
+            b"existing book"
+        );
     }
 }

@@ -16,6 +16,9 @@ Kindles strip all interactivity from documents, so you can't collapse a comment 
 - **One chapter per top-level comment.** Every top-level comment becomes its own chapter, titled `author · first words of the comment…` in the table of contents. On the Kindle, swipe up to open Page Flip and the chapter-skip arrows jump thread-to-thread; tap the top of the screen for the full TOC. Setting the reading footer to "chapter progress" shows how far into the current thread you are.
 - **Skip links.** Any comment with 5+ replies beneath it gets a small `skip N replies ↓` link that jumps just past the subtree — one tap to bypass a tangent you're done with.
 - **Depth-capped indentation.** Nesting indents up to 5 levels (configurable via `max_indent_depth`); deeper comments stay at the cap with a `↳ depth` marker so walls of margin never eat the page.
+- **E-reader-sized images.** Remote JPEG, PNG, GIF, and WebP images are localized before packaging, resized to a 1600-pixel longest edge, and emitted as Kindle-safe JPEG or PNG. One unavailable or unsupported image becomes a short alt-text marker instead of failing the article.
+
+Image work is bounded to 100 distinct remote fetches, 20 MiB per response, 100 MiB total input, 25 megapixels and 128 MiB decoded per image, with a 30-second timeout per request. Images beyond those limits are omitted with the same alt-text marker.
 
 Comment ordering matches the site: for HN, ranked order comes from the official Firebase API (see Notes).
 
@@ -43,6 +46,8 @@ kindlecast 'https://example.com/article' --no-email --keep-html
 ```
 
 The default mode saves to `~/Downloads` and emails the EPUB. Use `--no-email` to build only, or `--email-only` to avoid keeping a copy in Downloads.
+
+Kindlecast never attempts SMTP for an EPUB larger than 20 MiB. In the default mode, the completed book remains in the output directory for direct upload through [Send to Kindle](https://www.amazon.com/sendtokindle). For an oversized `--email-only` build, Kindlecast preserves a recovery copy in the configured output directory before returning the size error.
 
 ## Config
 
@@ -90,4 +95,4 @@ Rendering goes through pandoc (`html → epub3`, `--split-level=1`), so every `<
 
 Kindle depth styling relies on `margin-left`; left borders are progressive enhancement and may be dropped by Enhanced Typesetting. Headings inside comment bodies are neutralized (they'd otherwise fragment chapters), and `# headings` in Reddit selftext are demoted to `<h2>`.
 
-Sites that serve images only in modern formats (JPEG XL / AVIF / WebP, e.g. fasterthanli.me) will have broken images on-device — Kindle only handles JPEG/PNG/GIF/BMP and kindlecast doesn't transcode.
+Kindlecast decodes JPEG, PNG, GIF, and WebP input and packages images as JPEG or PNG for Kindle compatibility. AVIF, JPEG XL, SVG, unknown formats, and images that exceed the download or decoded-pixel budgets are omitted with their alt text preserved as reading context.
