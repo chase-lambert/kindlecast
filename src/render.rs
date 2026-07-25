@@ -1,4 +1,4 @@
-use crate::model::{Comment, Thread, ThreadKind, comment_stats};
+use crate::model::{Comment, Thread, ThreadKind};
 use crate::sites::domain_label;
 use chrono::{DateTime, Utc};
 use regex::Regex;
@@ -7,6 +7,15 @@ use std::sync::OnceLock;
 
 const SNIPPET_MAX_CHARS: usize = 48;
 const SKIP_LINK_MIN_DESCENDANTS: usize = 5;
+
+/// Comment tree annotated with descendant counts in one O(n) bottom-up pass.
+/// Skip links and chapter sizing use these counts instead of re-walking each subtree.
+struct AnnotatedComment<'a> {
+    comment: &'a Comment,
+    /// Number of comments in this subtree excluding self (children + deeper).
+    descendants: usize,
+    children: Vec<AnnotatedComment<'a>>,
+}
 
 pub fn render_html(thread: &Thread, max_indent_depth: usize) -> String {
     let mut out = String::new();
@@ -17,6 +26,21 @@ pub fn render_html(thread: &Thread, max_indent_depth: usize) -> String {
     }
     out.push_str("</body></html>\n");
     out
+}
+
+fn annotate_comments(comments: &[Comment]) -> Vec<AnnotatedComment<'_>> {
+    comments
+        .iter()
+        .map(|comment| {
+            let children = annotate_comments(&comment.children);
+            let descendants = children.iter().map(|child| 1 + child.descendants).sum();
+            AnnotatedComment {
+                comment,
+                descendants,
+                children,
+            }
+        })
+        .collect()
 }
 
 fn render_story(out: &mut String, thread: &Thread) {
@@ -91,22 +115,23 @@ fn render_story(out: &mut String, thread: &Thread) {
 }
 
 fn render_comments(out: &mut String, thread: &Thread, max_indent_depth: usize) {
+    let annotated = annotate_comments(&thread.comments);
     let mut next_comment_id = 1;
-    let top_level_count = thread.comments.len();
-    for (index, comment) in thread.comments.iter().enumerate() {
+    let top_level_count = annotated.len();
+    for (index, node) in annotated.iter().enumerate() {
         let thread_index = index + 1;
         writeln!(
             out,
             "<h1 class=\"t-head\" id=\"t{thread_index}\">{}</h1>",
-            thread_heading(comment)
+            thread_heading(node.comment)
         )
         .unwrap();
-        let subtree_size = 1 + comment_stats(&comment.children).count;
+        let subtree_size = 1 + node.descendants;
         let thread_end_comment_id = next_comment_id + subtree_size - 1;
         let next_thread_id = (thread_index < top_level_count).then_some(thread_index + 1);
         render_comment(
             out,
-            comment,
+            node,
             max_indent_depth,
             &mut next_comment_id,
             thread_end_comment_id,
@@ -118,13 +143,14 @@ fn render_comments(out: &mut String, thread: &Thread, max_indent_depth: usize) {
 
 fn render_comment(
     out: &mut String,
-    comment: &Comment,
+    node: &AnnotatedComment<'_>,
     max_indent_depth: usize,
     next_comment_id: &mut usize,
     thread_end_comment_id: usize,
     next_thread_id: Option<usize>,
     is_top_level: bool,
 ) {
+    let comment = node.comment;
     let comment_id = *next_comment_id;
     *next_comment_id += 1;
     let display_depth = comment.depth.min(max_indent_depth);
@@ -133,7 +159,7 @@ fn render_comment(
     } else {
         String::new()
     };
-    let descendants = comment_stats(&comment.children).count;
+    let descendants = node.descendants;
     let skip_target = skip_target(
         comment_id,
         descendants,
@@ -171,7 +197,7 @@ fn render_comment(
     )
     .unwrap();
     out.push_str("</div>\n");
-    for child in &comment.children {
+    for child in &node.children {
         render_comment(
             out,
             child,
@@ -230,7 +256,7 @@ fn skip_link(descendants: usize, target: Option<String>) -> String {
 }
 
 fn snippet(html: &str, max_chars: usize) -> String {
-    let stripped = strip_tags(html);
+    let stripped = crate::util::strip_tags(html);
     let text = html_escape::decode_html_entities(&stripped);
     let collapsed = text.split_whitespace().collect::<Vec<_>>().join(" ");
     if collapsed.chars().count() <= max_chars {
@@ -247,14 +273,6 @@ fn snippet(html: &str, max_chars: usize) -> String {
     truncated = truncated.trim_end().to_string();
     truncated.push('…');
     truncated
-}
-
-fn strip_tags(html: &str) -> String {
-    static TAG_RE: OnceLock<Regex> = OnceLock::new();
-    TAG_RE
-        .get_or_init(|| Regex::new("(?is)<[^>]+>").unwrap())
-        .replace_all(html, " ")
-        .to_string()
 }
 
 fn neutralize_headings(html: &str) -> String {
@@ -297,7 +315,7 @@ fn short_date(time: DateTime<Utc>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Story, Thread};
+    use crate::model::{Story, Thread, comment_stats};
     use chrono::TimeZone;
 
     fn time() -> DateTime<Utc> {
@@ -466,5 +484,30 @@ mod tests {
 
         assert!(!heads[0].contains("c-author"));
         assert!(heads[1].contains("c-author"));
+    }
+
+    #[test]
+    fn annotate_counts_descendants_once_on_a_chain() {
+        // Chain of 5: root has 4 descendants, leaf has 0.
+        let mut leaf = comment("c4", "<p>4</p>", 4, vec![]);
+        for depth in (0..4).rev() {
+            leaf = comment(
+                &format!("c{depth}"),
+                &format!("<p>{depth}</p>"),
+                depth,
+                vec![leaf],
+            );
+        }
+        let annotated = annotate_comments(std::slice::from_ref(&leaf));
+        assert_eq!(annotated.len(), 1);
+        assert_eq!(annotated[0].descendants, 4);
+        assert_eq!(annotated[0].children[0].descendants, 3);
+        let mut node = &annotated[0];
+        for expected in [4, 3, 2, 1, 0] {
+            assert_eq!(node.descendants, expected);
+            if expected > 0 {
+                node = &node.children[0];
+            }
+        }
     }
 }

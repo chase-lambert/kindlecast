@@ -1,4 +1,5 @@
 use crate::config::Config;
+use crate::util::human_bytes;
 use anyhow::{Context, Result};
 use lettre::message::{Attachment, Mailbox, MultiPart, SinglePart, header::ContentType};
 use lettre::transport::smtp::authentication::Credentials;
@@ -59,13 +60,9 @@ pub fn ensure_within_email_budget(epub_path: &Path) -> Result<u64> {
 pub fn oversized_epub_diagnosis(size: u64) -> String {
     format!(
         "EPUB is {} (email limit {}); SMTP was not attempted",
-        human_size(size),
-        human_size(MAX_EMAIL_EPUB_BYTES)
+        human_bytes(size),
+        human_bytes(MAX_EMAIL_EPUB_BYTES)
     )
-}
-
-pub fn human_size(bytes: u64) -> String {
-    format!("{:.2} MiB", bytes as f64 / (1024 * 1024) as f64)
 }
 
 #[cfg(test)]

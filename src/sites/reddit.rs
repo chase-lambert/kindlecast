@@ -802,11 +802,8 @@ fn is_share_url(url: &str) -> bool {
 }
 
 fn resolve_share_url(url: &str) -> Result<String> {
-    let agent: ureq::Agent = ureq::Agent::config_builder()
-        .max_redirects(0)
-        .max_redirects_will_error(false)
-        .build()
-        .into();
+    // Share links only return a Location; do not follow redirects (need the header).
+    let agent = crate::sites::agent_without_redirects();
     let response = agent
         .get(url)
         .header("User-Agent", USER_AGENT)

@@ -1,4 +1,4 @@
-use crate::images;
+use crate::images::{self, ImageStats};
 use crate::model::{Thread, ThreadKind};
 use crate::render::render_html;
 use anyhow::{Context, Result, bail};
@@ -10,6 +10,12 @@ use tempfile::TempDir;
 pub struct BuildResult {
     pub epub_path: PathBuf,
     pub html_path: Option<PathBuf>,
+}
+
+/// Rendered + image-optimized HTML that enters the EPUB (and `--keep-html`).
+struct BookHtml {
+    html: String,
+    stats: ImageStats,
 }
 
 pub fn build_epub(
@@ -24,17 +30,17 @@ pub fn build_epub(
     fs::create_dir_all(output_dir)
         .with_context(|| format!("failed to create output directory {}", output_dir.display()))?;
     let temp = TempDir::new().context("failed to create temporary build directory")?;
-    let html = render_html(thread, max_indent_depth);
-    let optimized = images::optimize_html(
-        &html,
+    let book = prepare_book_html(
+        thread,
+        max_indent_depth,
         image_base_url(thread, fallback_url),
         temp.path(),
         progress,
     )?;
-    progress(&optimized.stats.summary());
+    progress(&book.stats.summary());
     let html_path = temp.path().join("thread.html");
     let css_path = temp.path().join("kindle.css");
-    fs::write(&html_path, optimized.html).context("failed to write temporary HTML")?;
+    fs::write(&html_path, &book.html).context("failed to write temporary HTML")?;
     fs::write(&css_path, css).context("failed to write temporary CSS")?;
 
     progress("running pandoc");
@@ -74,9 +80,12 @@ pub fn build_epub(
         bail!("pandoc failed: {head}");
     }
 
+    // Kept HTML matches the book document. Localized image paths point at the
+    // ephemeral build dir and will dangle when opened alone — that is intentional
+    // for build debugging; we do not copy images/ into the shared output dir.
     let kept_html = if keep_html {
         let keep_path = output_path.with_extension("html");
-        fs::write(&keep_path, html)
+        fs::write(&keep_path, &book.html)
             .with_context(|| format!("failed to keep rendered HTML at {}", keep_path.display()))?;
         Some(keep_path)
     } else {
@@ -86,6 +95,21 @@ pub fn build_epub(
     Ok(BuildResult {
         epub_path: output_path,
         html_path: kept_html,
+    })
+}
+
+fn prepare_book_html(
+    thread: &Thread,
+    max_indent_depth: usize,
+    base_url: Option<&str>,
+    build_dir: &Path,
+    progress: &dyn Fn(&str),
+) -> Result<BookHtml> {
+    let rendered = render_html(thread, max_indent_depth);
+    let optimized = images::optimize_html(&rendered, base_url, build_dir, progress)?;
+    Ok(BookHtml {
+        html: optimized.html,
+        stats: optimized.stats,
     })
 }
 
@@ -133,5 +157,57 @@ fn slug(value: &str) -> String {
         "thread".to_string()
     } else {
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{Comment, Story, Thread, ThreadKind};
+    use chrono::{TimeZone, Utc};
+    use tempfile::tempdir;
+
+    fn article_with_image() -> Thread {
+        // Instantly-refused target so image optimization fails without DNS/network wait.
+        let remote = "http://127.0.0.1:1/photo.png";
+        Thread {
+            kind: ThreadKind::Article,
+            story: Story {
+                id: String::new(),
+                title: "With Image".to_string(),
+                url: Some("https://example.com/post".to_string()),
+                discussion_url: None,
+                author: "author".to_string(),
+                points: None,
+                time: Utc.with_ymd_and_hms(2026, 7, 8, 12, 0, 0).unwrap(),
+                text_html: Some(format!(r#"<p>Hello</p><img src="{remote}" alt="Photo">"#)),
+            },
+            comments: Vec::<Comment>::new(),
+            comment_count: 0,
+            max_depth: 0,
+            source: "example.com".to_string(),
+            source_slug: "example-com".to_string(),
+        }
+    }
+
+    #[test]
+    fn book_html_is_optimized_document_not_pre_image_render() {
+        let dir = tempdir().unwrap();
+        let thread = article_with_image();
+        let remote = "http://127.0.0.1:1/photo.png";
+        // Real optimize path; image fetch fails immediately (connection refused).
+        // Book HTML must be the optimized document (omission marker), not the raw remote URL.
+        let book = prepare_book_html(&thread, 5, thread.story.url.as_deref(), dir.path(), &|_| {})
+            .unwrap();
+
+        assert!(
+            book.html.contains("image-omitted"),
+            "expected image-omitted marker after failed fetch, got: {}",
+            book.html
+        );
+        assert!(
+            !book.html.contains(remote),
+            "pre-optimization remote URL must not remain in book HTML"
+        );
     }
 }

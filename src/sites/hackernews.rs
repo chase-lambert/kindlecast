@@ -1,5 +1,5 @@
 use crate::model::{Comment, Story, Thread, ThreadKind};
-use crate::sites::{Site, USER_AGENT, fetch_json};
+use crate::sites::{Site, fetch_json};
 use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Utc};
 use regex::Regex;
@@ -99,7 +99,8 @@ fn fetch_display_orders(ids: &[u64]) -> HashMap<u64, Vec<u64>> {
     std::thread::scope(|scope| {
         for _ in 0..workers {
             scope.spawn(|| {
-                let agent = ureq::Agent::new_with_defaults();
+                // One agent per worker reuses connections across branch lookups.
+                let agent = crate::sites::agent_with_timeout();
                 loop {
                     let index = next.fetch_add(1, Ordering::Relaxed);
                     let Some(&id) = ids.get(index) else { break };
@@ -119,14 +120,8 @@ fn fetch_firebase_kids(agent: &ureq::Agent, id: u64) -> Result<Vec<u64>> {
         kids: Option<Vec<u64>>,
     }
     let url = format!("https://hacker-news.firebaseio.com/v0/item/{id}.json");
-    let item = agent
-        .get(&url)
-        .header("User-Agent", USER_AGENT)
-        .call()
-        .with_context(|| format!("failed to fetch {url}"))?
-        .body_mut()
-        .read_json::<FirebaseItem>()
-        .with_context(|| format!("failed to decode Firebase response for item {id}"))?;
+    let item: FirebaseItem = crate::sites::fetch_json_with(agent, &url)
+        .with_context(|| format!("failed to load Firebase item {id}"))?;
     Ok(item.kids.unwrap_or_default())
 }
 
@@ -162,8 +157,7 @@ fn parse_id(url: &str) -> Option<u64> {
 
 fn fetch_item(id: u64) -> Result<AlgoliaItem> {
     let url = format!("https://hn.algolia.com/api/v1/items/{id}");
-    fetch_json::<AlgoliaItem>(&url)
-        .with_context(|| format!("failed to decode Algolia response for item {id}"))
+    fetch_json::<AlgoliaItem>(&url).with_context(|| format!("failed to load HN item {id}"))
 }
 
 fn build_thread(item: AlgoliaItem) -> Result<Thread> {

@@ -1,11 +1,10 @@
 use crate::model::{Story, Thread, ThreadKind};
-use crate::sites::{Site, USER_AGENT, domain_label, is_http_url};
-use anyhow::{Context, Result, bail};
+use crate::sites::{Site, agent_with_timeout, domain_label, fetch_html, is_http_url};
+use anyhow::{Result, bail};
 use chrono::{DateTime, Utc};
 use dom_smoothie::{Config, Readability};
 use regex::Regex;
 use std::sync::OnceLock;
-use ureq::ResponseExt;
 
 const MIN_EXTRACTED_TEXT_CHARS: usize = 200;
 
@@ -41,7 +40,7 @@ pub fn fetch(url: &str, page_html: Option<String>, progress: &dyn Fn(&str)) -> R
         }
         _ => {
             progress("fetching article HTML");
-            fetch_html(url)?
+            fetch_document(url)?
         }
     };
     extract_article(document)
@@ -52,17 +51,8 @@ struct HtmlDocument {
     url: String,
 }
 
-fn fetch_html(url: &str) -> Result<HtmlDocument> {
-    let mut response = ureq::get(url)
-        .header("User-Agent", USER_AGENT)
-        .header("Accept", "text/html,application/xhtml+xml")
-        .call()
-        .with_context(|| format!("failed to fetch {url}"))?;
-    let final_url = response.get_uri().to_string();
-    let html = response
-        .body_mut()
-        .read_to_string()
-        .with_context(|| format!("failed to read HTML from {final_url}"))?;
+fn fetch_document(url: &str) -> Result<HtmlDocument> {
+    let (final_url, html) = fetch_html(&agent_with_timeout(), url)?;
     Ok(HtmlDocument {
         html,
         url: final_url,
@@ -76,7 +66,7 @@ fn extract_article(document: HtmlDocument) -> Result<Thread> {
     let article =
         Readability::new(document.html, Some(url.as_str()), Some(Config::default()))?.parse()?;
     let content = article.content.trim().to_string();
-    let text_len = strip_tags(&content).trim().chars().count();
+    let text_len = crate::util::strip_tags(&content).trim().chars().count();
     if text_len < MIN_EXTRACTED_TEXT_CHARS {
         bail!("article extraction found only {text_len} text chars; refusing to send a husk");
     }
@@ -131,14 +121,6 @@ fn title_tag(html: &str) -> Option<String> {
                 .to_string()
         })
         .filter(|title| !title.is_empty())
-}
-
-fn strip_tags(html: &str) -> String {
-    static TAG_RE: OnceLock<Regex> = OnceLock::new();
-    TAG_RE
-        .get_or_init(|| Regex::new("(?is)<[^>]+>").unwrap())
-        .replace_all(html, " ")
-        .to_string()
 }
 
 #[cfg(test)]

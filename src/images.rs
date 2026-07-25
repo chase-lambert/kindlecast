@@ -11,10 +11,10 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::{Cursor, Read};
 use std::path::Path;
-use std::time::Duration;
 use url::Url;
 
-use crate::sites::USER_AGENT;
+use crate::sites::{FETCH_TIMEOUT, USER_AGENT};
+use crate::util::human_bytes;
 
 const ASSET_DIR: &str = "images";
 const MAX_IMAGE_EDGE: u32 = 1_600;
@@ -25,7 +25,6 @@ const MAX_SOURCE_DIMENSION: u32 = 10_000;
 const MAX_SOURCE_PIXELS: u64 = 25_000_000;
 const MAX_DECODE_ALLOC: u64 = 128 * 1024 * 1024;
 const MAX_REMOTE_FETCHES: usize = 100;
-const FETCH_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ImageStats {
@@ -340,17 +339,6 @@ fn omit_image(node: &NodeRef<'_>) {
         "<span class=\"image-omitted\">[{}]</span>",
         html_escape::encode_text(&label)
     ));
-}
-
-fn human_bytes(bytes: u64) -> String {
-    const MIB: f64 = (1024 * 1024) as f64;
-    if bytes >= 1024 * 1024 {
-        format!("{:.2} MiB", bytes as f64 / MIB)
-    } else if bytes >= 1024 {
-        format!("{:.1} KiB", bytes as f64 / 1024.0)
-    } else {
-        format!("{bytes} B")
-    }
 }
 
 #[cfg(test)]

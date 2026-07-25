@@ -8,6 +8,7 @@ mod model;
 mod native_host;
 mod render;
 mod sites;
+mod util;
 
 use anyhow::{Context, Result, bail};
 use clap::Parser;
