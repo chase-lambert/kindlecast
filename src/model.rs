@@ -1,20 +1,57 @@
 use chrono::{DateTime, Utc};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ThreadKind {
-    Discussion,
+#[derive(Debug, Clone)]
+pub struct Book {
+    pub story: Story,
+    pub body: BookBody,
+    pub source: String,
+    pub source_slug: String,
+}
+
+/// Discussion vs article content. Comments are exclusive to Discussion.
+#[derive(Debug, Clone)]
+pub enum BookBody {
+    Discussion(Discussion),
     Article,
 }
 
+/// Comment forest with derived statistics. Fields are private so counts cannot
+/// drift from the tree; construct only via [`Discussion::new`].
 #[derive(Debug, Clone)]
-pub struct Thread {
-    pub kind: ThreadKind,
-    pub story: Story,
-    pub comments: Vec<Comment>,
-    pub comment_count: usize,
-    pub max_depth: usize,
-    pub source: String,
-    pub source_slug: String,
+pub struct Discussion {
+    comments: Vec<Comment>,
+    comment_count: usize,
+    max_depth: usize,
+}
+
+impl Discussion {
+    pub fn new(comments: Vec<Comment>) -> Self {
+        let stats = comment_stats(&comments);
+        Self {
+            comments,
+            comment_count: stats.count,
+            max_depth: stats.max_depth,
+        }
+    }
+
+    pub fn comments(&self) -> &[Comment] {
+        &self.comments
+    }
+
+    pub fn comment_count(&self) -> usize {
+        self.comment_count
+    }
+
+    pub fn max_depth(&self) -> usize {
+        self.max_depth
+    }
+}
+
+impl BookBody {
+    /// Construction boundary: stats are derived from `comments`.
+    pub fn discussion(comments: Vec<Comment>) -> Self {
+        BookBody::Discussion(Discussion::new(comments))
+    }
 }
 
 #[derive(Debug, Clone)]

@@ -1,4 +1,4 @@
-use crate::model::{Story, Thread, ThreadKind};
+use crate::model::{Book, BookBody, Story};
 use crate::sites::{Site, agent_with_timeout, domain_label, fetch_html, is_http_url};
 use anyhow::{Result, bail};
 use chrono::{DateTime, Utc};
@@ -19,17 +19,12 @@ impl Site for Article {
         is_http_url(url)
     }
 
-    fn fetch(
-        &self,
-        url: &str,
-        page_html: Option<String>,
-        progress: &dyn Fn(&str),
-    ) -> Result<Thread> {
+    fn fetch(&self, url: &str, page_html: Option<String>, progress: &dyn Fn(&str)) -> Result<Book> {
         fetch(url, page_html, progress)
     }
 }
 
-pub fn fetch(url: &str, page_html: Option<String>, progress: &dyn Fn(&str)) -> Result<Thread> {
+pub fn fetch(url: &str, page_html: Option<String>, progress: &dyn Fn(&str)) -> Result<Book> {
     let document = match page_html {
         Some(html) if !html.trim().is_empty() => {
             progress("using captured page DOM");
@@ -59,7 +54,7 @@ fn fetch_document(url: &str) -> Result<HtmlDocument> {
     })
 }
 
-fn extract_article(document: HtmlDocument) -> Result<Thread> {
+fn extract_article(document: HtmlDocument) -> Result<Book> {
     let title_fallback = title_tag(&document.html);
     let domain = domain_label(&document.url);
     let url = document.url;
@@ -84,8 +79,7 @@ fn extract_article(document: HtmlDocument) -> Result<Thread> {
         .map(|time| time.with_timezone(&Utc))
         .unwrap_or_else(Utc::now);
 
-    Ok(Thread {
-        kind: ThreadKind::Article,
+    Ok(Book {
         story: Story {
             id: String::new(),
             title,
@@ -96,9 +90,7 @@ fn extract_article(document: HtmlDocument) -> Result<Thread> {
             time,
             text_html: Some(content),
         },
-        comments: Vec::new(),
-        comment_count: 0,
-        max_depth: 0,
+        body: BookBody::Article,
         source: domain.clone(),
         source_slug: domain.replace('.', "-"),
     })
@@ -134,20 +126,14 @@ mod tests {
         let html = format!(
             "<html><head><title>Readable</title></head><body><nav>Nav junk</nav><article><h1>Readable</h1><p>{body}</p></article></body></html>"
         );
-        let thread = super::extract_article(super::HtmlDocument {
+        let book = super::extract_article(super::HtmlDocument {
             html,
             url: "https://example.com/story".to_string(),
         })
         .unwrap();
 
-        assert_eq!(thread.kind, crate::model::ThreadKind::Article);
-        assert_eq!(thread.source_slug, "example-com");
-        assert!(
-            thread
-                .story
-                .text_html
-                .unwrap()
-                .contains("readable paragraph")
-        );
+        assert!(matches!(book.body, crate::model::BookBody::Article));
+        assert_eq!(book.source_slug, "example-com");
+        assert!(book.story.text_html.unwrap().contains("readable paragraph"));
     }
 }

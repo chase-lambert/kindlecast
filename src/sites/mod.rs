@@ -1,4 +1,4 @@
-use crate::model::Thread;
+use crate::model::Book;
 use crate::util::human_bytes;
 use anyhow::{Context, Result};
 use serde::de::DeserializeOwned;
@@ -23,12 +23,7 @@ pub const MAX_HTML_BODY_BYTES: u64 = 16 * 1024 * 1024;
 pub trait Site: Sync {
     fn name(&self) -> &'static str;
     fn matches(&self, url: &str) -> bool;
-    fn fetch(
-        &self,
-        url: &str,
-        page_html: Option<String>,
-        progress: &dyn Fn(&str),
-    ) -> Result<Thread>;
+    fn fetch(&self, url: &str, page_html: Option<String>, progress: &dyn Fn(&str)) -> Result<Book>;
 }
 
 static HACKER_NEWS: hackernews::HackerNews = hackernews::HackerNews;

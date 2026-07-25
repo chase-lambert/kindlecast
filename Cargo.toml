@@ -20,3 +20,9 @@ tempfile = "3"
 toml = "0.8"
 ureq = "3"
 url = "2"
+
+[dev-dependencies]
+# EPUB is Deflate-zip only. `deflate` enables pure-Rust flate2 (zip does not
+# re-export a slimmer public feature that pulls flate2 alone). Still avoids
+# default AES/bzip2/xz/zstd/lzma native stacks.
+zip = { version = "2", default-features = false, features = ["deflate"] }

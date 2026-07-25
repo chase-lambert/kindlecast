@@ -1,4 +1,4 @@
-use crate::model::{Comment, Story, Thread, ThreadKind};
+use crate::model::{Book, BookBody, Comment, Story};
 use crate::sites::{Site, fetch_json};
 use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Utc};
@@ -42,7 +42,7 @@ impl Site for HackerNews {
         url: &str,
         _page_html: Option<String>,
         progress: &dyn Fn(&str),
-    ) -> Result<Thread> {
+    ) -> Result<Book> {
         let id = parse_id(url).context("expected an HN item URL or bare item ID")?;
         progress(&format!("fetching item {id}"));
         let item = fetch_item(id)?;
@@ -160,20 +160,17 @@ fn fetch_item(id: u64) -> Result<AlgoliaItem> {
     fetch_json::<AlgoliaItem>(&url).with_context(|| format!("failed to load HN item {id}"))
 }
 
-fn build_thread(item: AlgoliaItem) -> Result<Thread> {
+fn build_thread(item: AlgoliaItem) -> Result<Book> {
     if !is_thread_root(&item) {
         bail!("Algolia item {} is not a story or poll", item.id);
     }
     let comments_raw = item.children.unwrap_or_default();
-    let mut comment_count = 0;
-    let mut max_depth = 0;
     let comments = comments_raw
         .into_iter()
-        .filter_map(|child| build_comment(child, 0, &mut comment_count, &mut max_depth).transpose())
+        .filter_map(|child| build_comment(child, 0).transpose())
         .collect::<Result<Vec<_>>>()?;
     let story_id = item.id;
-    Ok(Thread {
-        kind: ThreadKind::Discussion,
+    Ok(Book {
         story: Story {
             id: story_id.to_string(),
             title: item.title.unwrap_or_else(|| format!("HN item {story_id}")),
@@ -184,9 +181,7 @@ fn build_thread(item: AlgoliaItem) -> Result<Thread> {
             time: item.created_at.unwrap_or_else(Utc::now),
             text_html: item.text,
         },
-        comments,
-        comment_count,
-        max_depth,
+        body: BookBody::discussion(comments),
         source: "Hacker News".to_string(),
         source_slug: "hn".to_string(),
     })
@@ -196,12 +191,7 @@ fn is_thread_root(item: &AlgoliaItem) -> bool {
     matches!(item.kind.as_deref(), Some("story" | "poll"))
 }
 
-fn build_comment(
-    item: AlgoliaItem,
-    depth: usize,
-    comment_count: &mut usize,
-    max_depth: &mut usize,
-) -> Result<Option<Comment>> {
+fn build_comment(item: AlgoliaItem, depth: usize) -> Result<Option<Comment>> {
     let author = item.author.unwrap_or_default();
     let html = item.text.unwrap_or_default();
     let children_raw = item.children.unwrap_or_default();
@@ -209,11 +199,9 @@ fn build_comment(
         return Ok(None);
     }
 
-    *comment_count += 1;
-    *max_depth = (*max_depth).max(depth);
     let children = children_raw
         .into_iter()
-        .filter_map(|child| build_comment(child, depth + 1, comment_count, max_depth).transpose())
+        .filter_map(|child| build_comment(child, depth + 1).transpose())
         .collect::<Result<Vec<_>>>()?;
 
     Ok(Some(Comment {
@@ -252,13 +240,19 @@ mod tests {
     fn converts_algolia_tree_to_model() {
         let item: super::AlgoliaItem =
             serde_json::from_str(include_str!("fixtures/hn_item_small.json")).unwrap();
-        let thread = super::build_thread(item).unwrap();
+        let book = super::build_thread(item).unwrap();
 
-        assert_eq!(thread.story.id, "126809");
-        assert_eq!(thread.comment_count, 4);
-        assert_eq!(thread.max_depth, 2);
-        assert_eq!(thread.comments.len(), 2);
-        assert_eq!(thread.comments[0].children[0].children[0].author, "carol");
+        assert_eq!(book.story.id, "126809");
+        let crate::model::BookBody::Discussion(discussion) = book.body else {
+            panic!("expected discussion");
+        };
+        assert_eq!(discussion.comment_count(), 4);
+        assert_eq!(discussion.max_depth(), 2);
+        assert_eq!(discussion.comments().len(), 2);
+        assert_eq!(
+            discussion.comments()[0].children[0].children[0].author,
+            "carol"
+        );
     }
 
     #[test]

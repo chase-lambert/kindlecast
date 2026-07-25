@@ -1,4 +1,4 @@
-use crate::model::{Comment, Story, Thread, ThreadKind, comment_stats, rebase_comments};
+use crate::model::{Book, BookBody, Comment, Story, rebase_comments};
 use crate::sites::{Site, fetch_json};
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
@@ -43,7 +43,7 @@ impl Site for Lobsters {
         url: &str,
         _page_html: Option<String>,
         progress: &dyn Fn(&str),
-    ) -> Result<Thread> {
+    ) -> Result<Book> {
         let id = parse_id(url).context("expected a lobste.rs story URL")?;
         let api_url = format!("https://lobste.rs/s/{id}.json");
         progress(&format!("fetching story {id}"));
@@ -62,13 +62,11 @@ fn parse_id(url: &str) -> Option<String> {
         .map(|m| m.as_str().to_string())
 }
 
-fn build_thread(story: LobstersStory) -> Result<Thread> {
+fn build_thread(story: LobstersStory) -> Result<Book> {
     let mut index = 0;
     let comments = build_comments(&story.comments, &mut index, 0);
-    let stats = comment_stats(&comments);
     let story_url = format!("https://lobste.rs/s/{}", story.short_id);
-    Ok(Thread {
-        kind: ThreadKind::Discussion,
+    Ok(Book {
         story: Story {
             id: story.short_id,
             title: story.title,
@@ -79,9 +77,7 @@ fn build_thread(story: LobstersStory) -> Result<Thread> {
             time: story.created_at,
             text_html: story.description.filter(|html| !html.trim().is_empty()),
         },
-        comments,
-        comment_count: stats.count,
-        max_depth: stats.max_depth,
+        body: BookBody::discussion(comments),
         source: "Lobsters".to_string(),
         source_slug: "lobsters".to_string(),
     })
@@ -145,7 +141,7 @@ mod tests {
     #[test]
     fn rebuilds_flat_comment_tree() {
         let now = Utc::now();
-        let thread = super::build_thread(LobstersStory {
+        let book = super::build_thread(LobstersStory {
             short_id: "abc123".to_string(),
             title: "story".to_string(),
             url: Some("https://example.com".to_string()),
@@ -179,15 +175,18 @@ mod tests {
         })
         .unwrap();
 
-        assert_eq!(thread.comment_count, 3);
-        assert_eq!(thread.max_depth, 1);
-        assert_eq!(thread.comments[0].children[0].author, "carol");
+        let crate::model::BookBody::Discussion(discussion) = book.body else {
+            panic!("expected discussion");
+        };
+        assert_eq!(discussion.comment_count(), 3);
+        assert_eq!(discussion.max_depth(), 1);
+        assert_eq!(discussion.comments()[0].children[0].author, "carol");
     }
 
     #[test]
     fn promotes_deleted_children_at_parent_depth() {
         let now = Utc::now();
-        let thread = super::build_thread(LobstersStory {
+        let book = super::build_thread(LobstersStory {
             short_id: "abc123".to_string(),
             title: "story".to_string(),
             url: None,
@@ -214,9 +213,12 @@ mod tests {
         })
         .unwrap();
 
-        assert_eq!(thread.comment_count, 1);
-        assert_eq!(thread.max_depth, 0);
-        assert_eq!(thread.comments[0].author, "bob");
-        assert_eq!(thread.comments[0].depth, 0);
+        let crate::model::BookBody::Discussion(discussion) = book.body else {
+            panic!("expected discussion");
+        };
+        assert_eq!(discussion.comment_count(), 1);
+        assert_eq!(discussion.max_depth(), 0);
+        assert_eq!(discussion.comments()[0].author, "bob");
+        assert_eq!(discussion.comments()[0].depth, 0);
     }
 }

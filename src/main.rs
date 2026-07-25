@@ -14,7 +14,7 @@ use anyhow::{Context, Result, bail};
 use clap::Parser;
 use cli::{Cli, Commands, RunArgs};
 use config::Config;
-use model::ThreadKind;
+use model::BookBody;
 use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
@@ -62,10 +62,10 @@ pub fn run_job(options: JobOptions, progress: &dyn Fn(&str, &str)) -> Result<Job
     let site = sites::adapter_for(&options.url)
         .with_context(|| "unsupported URL (HN/Reddit/Lobsters thread, or any http(s) article)")?;
     progress("fetching", site.name());
-    let thread = site.fetch(&options.url, options.page_html, &|detail| {
+    let book = site.fetch(&options.url, options.page_html, &|detail| {
         progress("fetching", detail)
     })?;
-    progress("fetching", &fetch_summary(&thread));
+    progress("fetching", &fetch_summary(&book));
 
     progress("rendering", "rendering Kindle HTML");
     let output_dir = if options.email_only {
@@ -100,7 +100,7 @@ pub fn run_job(options: JobOptions, progress: &dyn Fn(&str, &str)) -> Result<Job
     };
 
     let build = epub::build_epub(
-        &thread,
+        &book,
         &css,
         &epub_target_dir,
         max_depth,
@@ -135,15 +135,20 @@ pub fn run_job(options: JobOptions, progress: &dyn Fn(&str, &str)) -> Result<Job
             );
         }
         progress("emailing", "sending EPUB to Kindle");
-        email::send_epub(&cfg, &thread.story.title, &thread.source, &build.epub_path)?;
+        email::send_epub(&cfg, &book.story.title, &book.source, &build.epub_path)?;
         true
     } else {
         false
     };
 
+    let comments = match &book.body {
+        BookBody::Discussion(discussion) => discussion.comment_count(),
+        BookBody::Article => 0,
+    };
+
     Ok(JobResult {
-        title: thread.story.title,
-        comments: thread.comment_count,
+        title: book.story.title,
+        comments,
         file: build.epub_path,
         emailed,
     })
@@ -224,15 +229,16 @@ fn main() {
     }
 }
 
-fn fetch_summary(thread: &model::Thread) -> String {
-    match thread.kind {
-        ThreadKind::Discussion => {
+fn fetch_summary(book: &model::Book) -> String {
+    match &book.body {
+        BookBody::Discussion(discussion) => {
             format!(
                 "{} comments; max depth {}",
-                thread.comment_count, thread.max_depth
+                discussion.comment_count(),
+                discussion.max_depth()
             )
         }
-        ThreadKind::Article => thread
+        BookBody::Article => book
             .story
             .text_html
             .as_deref()

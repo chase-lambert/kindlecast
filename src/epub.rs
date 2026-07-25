@@ -1,5 +1,5 @@
 use crate::images::{self, ImageStats};
-use crate::model::{Thread, ThreadKind};
+use crate::model::{Book, BookBody};
 use crate::render::render_html;
 use anyhow::{Context, Result, bail};
 use std::fs;
@@ -13,13 +13,13 @@ pub struct BuildResult {
 }
 
 /// Rendered + image-optimized HTML that enters the EPUB (and `--keep-html`).
-struct BookHtml {
+struct PreparedHtml {
     html: String,
     stats: ImageStats,
 }
 
 pub fn build_epub(
-    thread: &Thread,
+    book: &Book,
     css: &str,
     output_dir: &Path,
     max_indent_depth: usize,
@@ -30,21 +30,21 @@ pub fn build_epub(
     fs::create_dir_all(output_dir)
         .with_context(|| format!("failed to create output directory {}", output_dir.display()))?;
     let temp = TempDir::new().context("failed to create temporary build directory")?;
-    let book = prepare_book_html(
-        thread,
+    let prepared = prepare_book_html(
+        book,
         max_indent_depth,
-        image_base_url(thread, fallback_url),
+        image_base_url(book, fallback_url),
         temp.path(),
         progress,
     )?;
-    progress(&book.stats.summary());
+    progress(&prepared.stats.summary());
     let html_path = temp.path().join("thread.html");
     let css_path = temp.path().join("kindle.css");
-    fs::write(&html_path, &book.html).context("failed to write temporary HTML")?;
+    fs::write(&html_path, &prepared.html).context("failed to write temporary HTML")?;
     fs::write(&css_path, css).context("failed to write temporary CSS")?;
 
     progress("running pandoc");
-    let output_path = output_dir.join(epub_filename(thread));
+    let output_path = output_dir.join(epub_filename(book));
     let mut cmd = Command::new("pandoc");
     cmd.arg(&html_path)
         .arg("--from")
@@ -58,14 +58,11 @@ pub fn build_epub(
         .arg(temp.path())
         .arg("--split-level=1")
         .arg("--metadata")
-        .arg(format!("title={}", thread.story.title))
+        .arg(format!("title={}", book.story.title))
         .arg("--metadata")
-        .arg(format!(
-            "author={} · {}",
-            thread.source, thread.story.author
-        ))
+        .arg(format!("author={} · {}", book.source, book.story.author))
         .arg("--metadata")
-        .arg(format!("date={}", thread.story.time.format("%Y-%m-%d")))
+        .arg(format!("date={}", book.story.time.format("%Y-%m-%d")))
         .arg("--metadata")
         .arg("language=en-US")
         .arg("--output")
@@ -85,7 +82,7 @@ pub fn build_epub(
     // for build debugging; we do not copy images/ into the shared output dir.
     let kept_html = if keep_html {
         let keep_path = output_path.with_extension("html");
-        fs::write(&keep_path, &book.html)
+        fs::write(&keep_path, &prepared.html)
             .with_context(|| format!("failed to keep rendered HTML at {}", keep_path.display()))?;
         Some(keep_path)
     } else {
@@ -99,39 +96,39 @@ pub fn build_epub(
 }
 
 fn prepare_book_html(
-    thread: &Thread,
+    book: &Book,
     max_indent_depth: usize,
     base_url: Option<&str>,
     build_dir: &Path,
     progress: &dyn Fn(&str),
-) -> Result<BookHtml> {
-    let rendered = render_html(thread, max_indent_depth);
+) -> Result<PreparedHtml> {
+    let rendered = render_html(book, max_indent_depth);
     let optimized = images::optimize_html(&rendered, base_url, build_dir, progress)?;
-    Ok(BookHtml {
+    Ok(PreparedHtml {
         html: optimized.html,
         stats: optimized.stats,
     })
 }
 
-fn image_base_url<'a>(thread: &'a Thread, fallback_url: &'a str) -> Option<&'a str> {
-    match thread.kind {
-        ThreadKind::Article => thread.story.url.as_deref(),
-        ThreadKind::Discussion => thread.story.discussion_url.as_deref(),
+fn image_base_url<'a>(book: &'a Book, fallback_url: &'a str) -> Option<&'a str> {
+    match book.body {
+        BookBody::Article => book.story.url.as_deref(),
+        BookBody::Discussion(_) => book.story.discussion_url.as_deref(),
     }
     .or(Some(fallback_url))
 }
 
-fn epub_filename(thread: &Thread) -> String {
-    match thread.kind {
-        ThreadKind::Discussion => {
+fn epub_filename(book: &Book) -> String {
+    match book.body {
+        BookBody::Discussion(_) => {
             format!(
                 "{}-{}-{}.epub",
-                thread.source_slug,
-                slug(&thread.story.id),
-                slug(&thread.story.title)
+                book.source_slug,
+                slug(&book.story.id),
+                slug(&book.story.title)
             )
         }
-        ThreadKind::Article => format!("{}-{}.epub", thread.source_slug, slug(&thread.story.title)),
+        BookBody::Article => format!("{}-{}.epub", book.source_slug, slug(&book.story.title)),
     }
 }
 
@@ -163,15 +160,16 @@ fn slug(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Comment, Story, Thread, ThreadKind};
+    use crate::model::{Book, BookBody, Comment, Story};
     use chrono::{TimeZone, Utc};
+    use std::collections::HashMap;
+    use std::io::Read;
     use tempfile::tempdir;
 
-    fn article_with_image() -> Thread {
+    fn article_with_image() -> Book {
         // Instantly-refused target so image optimization fails without DNS/network wait.
         let remote = "http://127.0.0.1:1/photo.png";
-        Thread {
-            kind: ThreadKind::Article,
+        Book {
             story: Story {
                 id: String::new(),
                 title: "With Image".to_string(),
@@ -182,32 +180,164 @@ mod tests {
                 time: Utc.with_ymd_and_hms(2026, 7, 8, 12, 0, 0).unwrap(),
                 text_html: Some(format!(r#"<p>Hello</p><img src="{remote}" alt="Photo">"#)),
             },
-            comments: Vec::<Comment>::new(),
-            comment_count: 0,
-            max_depth: 0,
+            body: BookBody::Article,
             source: "example.com".to_string(),
             source_slug: "example-com".to_string(),
         }
     }
 
+    fn discussion_with_markers() -> Book {
+        let time = Utc.with_ymd_and_hms(2026, 7, 8, 12, 0, 0).unwrap();
+        Book {
+            story: Story {
+                id: "42".to_string(),
+                title: "Split Chapters".to_string(),
+                url: Some("https://example.com/story".to_string()),
+                discussion_url: Some("https://example.com/discuss".to_string()),
+                author: "submitter".to_string(),
+                points: Some(3),
+                time,
+                text_html: Some("<p>MARKER_STORY_BODY_xyz</p>".to_string()),
+            },
+            body: BookBody::discussion(vec![
+                Comment {
+                    author: "alice".to_string(),
+                    time,
+                    html: "<p>MARKER_COMMENT_ONE_abc</p>".to_string(),
+                    depth: 0,
+                    children: vec![],
+                },
+                Comment {
+                    author: "bob".to_string(),
+                    time,
+                    html: "<p>MARKER_COMMENT_TWO_def</p>".to_string(),
+                    depth: 0,
+                    children: vec![],
+                },
+            ]),
+            source: "hn".to_string(),
+            source_slug: "hn".to_string(),
+        }
+    }
+
+    fn content_entries(epub_path: &Path) -> HashMap<String, String> {
+        let file = fs::File::open(epub_path).expect("open epub");
+        let mut archive = zip::ZipArchive::new(file).expect("epub is a zip");
+        let mut entries = HashMap::new();
+        for i in 0..archive.len() {
+            let mut entry = archive.by_index(i).expect("zip entry");
+            let name = entry.name().to_string();
+            let lower = name.to_ascii_lowercase();
+            // Reading documents only — nav/toc/ncx list chapter titles and may
+            // duplicate body markers without being the chapter split itself.
+            let is_nav = lower.contains("nav.xhtml")
+                || lower.contains("toc.xhtml")
+                || lower.ends_with(".ncx")
+                || lower.contains("/nav")
+                || lower.contains("toc.ncx");
+            let is_content = !is_nav
+                && (lower.ends_with(".xhtml")
+                    || lower.ends_with(".html")
+                    || lower.ends_with(".htm"));
+            if !is_content {
+                continue;
+            }
+            let mut body = String::new();
+            entry.read_to_string(&mut body).expect("read content entry");
+            entries.insert(name, body);
+        }
+        entries
+    }
+
+    fn entry_path_with_marker(entries: &HashMap<String, String>, marker: &str) -> String {
+        let matches: Vec<_> = entries
+            .iter()
+            .filter(|(_, body)| body.contains(marker))
+            .map(|(name, _)| name.clone())
+            .collect();
+        assert_eq!(
+            matches.len(),
+            1,
+            "marker {marker:?} should appear in exactly one content entry, found {matches:?}"
+        );
+        matches.into_iter().next().unwrap()
+    }
+
     #[test]
     fn book_html_is_optimized_document_not_pre_image_render() {
         let dir = tempdir().unwrap();
-        let thread = article_with_image();
+        let book = article_with_image();
         let remote = "http://127.0.0.1:1/photo.png";
         // Real optimize path; image fetch fails immediately (connection refused).
         // Book HTML must be the optimized document (omission marker), not the raw remote URL.
-        let book = prepare_book_html(&thread, 5, thread.story.url.as_deref(), dir.path(), &|_| {})
-            .unwrap();
+        let prepared =
+            prepare_book_html(&book, 5, book.story.url.as_deref(), dir.path(), &|_| {}).unwrap();
 
         assert!(
-            book.html.contains("image-omitted"),
+            prepared.html.contains("image-omitted"),
             "expected image-omitted marker after failed fetch, got: {}",
-            book.html
+            prepared.html
         );
         assert!(
-            !book.html.contains(remote),
+            !prepared.html.contains(remote),
             "pre-optimization remote URL must not remain in book HTML"
+        );
+    }
+
+    #[test]
+    fn pandoc_epub_splits_story_and_top_level_comments() {
+        let dir = tempdir().unwrap();
+        let book = discussion_with_markers();
+        let result = build_epub(
+            &book,
+            "body { font-family: serif; }",
+            dir.path(),
+            5,
+            false,
+            "https://example.com/discuss",
+            &|_| {},
+        )
+        .expect("pandoc EPUB build");
+
+        let entries = content_entries(&result.epub_path);
+        let story_path = entry_path_with_marker(&entries, "MARKER_STORY_BODY_xyz");
+        let one_path = entry_path_with_marker(&entries, "MARKER_COMMENT_ONE_abc");
+        let two_path = entry_path_with_marker(&entries, "MARKER_COMMENT_TWO_def");
+        assert_ne!(story_path, one_path);
+        assert_ne!(story_path, two_path);
+        assert_ne!(one_path, two_path);
+    }
+
+    #[test]
+    fn pandoc_epub_omits_remote_images_but_keeps_story_links() {
+        let dir = tempdir().unwrap();
+        let book = article_with_image();
+        let remote = "http://127.0.0.1:1/photo.png";
+        let story_url = "https://example.com/post";
+        let result = build_epub(
+            &book,
+            "body { font-family: serif; }",
+            dir.path(),
+            5,
+            false,
+            story_url,
+            &|_| {},
+        )
+        .expect("pandoc EPUB build");
+
+        let entries = content_entries(&result.epub_path);
+        let all: String = entries.values().cloned().collect();
+        assert!(
+            all.contains("image-omitted"),
+            "omission marker must survive packaging"
+        );
+        assert!(
+            !all.contains(remote),
+            "exact remote image URL must not appear in any content document"
+        );
+        assert!(
+            all.contains(story_url),
+            "exact story URL must remain as a remote anchor by design; missing {story_url}"
         );
     }
 }

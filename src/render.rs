@@ -1,4 +1,4 @@
-use crate::model::{Comment, Thread, ThreadKind};
+use crate::model::{Book, BookBody, Comment};
 use crate::sites::domain_label;
 use chrono::{DateTime, Utc};
 use regex::Regex;
@@ -17,12 +17,14 @@ struct AnnotatedComment<'a> {
     children: Vec<AnnotatedComment<'a>>,
 }
 
-pub fn render_html(thread: &Thread, max_indent_depth: usize) -> String {
+pub fn render_html(book: &Book, max_indent_depth: usize) -> String {
     let mut out = String::new();
     out.push_str("<!doctype html><html><head><meta charset=\"utf-8\"></head><body>\n");
-    render_story(&mut out, thread);
-    if thread.kind == ThreadKind::Discussion && thread.comment_count > 0 {
-        render_comments(&mut out, thread, max_indent_depth);
+    render_story(&mut out, book);
+    if let BookBody::Discussion(discussion) = &book.body
+        && !discussion.comments().is_empty()
+    {
+        render_comments(&mut out, discussion.comments(), max_indent_depth);
     }
     out.push_str("</body></html>\n");
     out
@@ -43,44 +45,43 @@ fn annotate_comments(comments: &[Comment]) -> Vec<AnnotatedComment<'_>> {
         .collect()
 }
 
-fn render_story(out: &mut String, thread: &Thread) {
+fn render_story(out: &mut String, book: &Book) {
     writeln!(
         out,
         "<h1 class=\"story-title\">{}</h1>",
-        escape_html(&thread.story.title)
+        escape_html(&book.story.title)
     )
     .unwrap();
     // Classed block lines must be <div>, not <p>: pandoc's HTML reader drops
     // attributes from <p>, so p-level classes never reach the EPUB.
-    match thread.kind {
-        ThreadKind::Discussion => {
+    match &book.body {
+        BookBody::Discussion(discussion) => {
             writeln!(
                 out,
                 "<div class=\"story-meta\">{}by {} &middot; {} &middot; {} comments</div>",
-                thread
-                    .story
+                book.story
                     .points
                     .map(|points| format!("{points} points &middot; "))
                     .unwrap_or_default(),
-                escape_html(&thread.story.author),
-                short_date(thread.story.time),
-                thread.comment_count
+                escape_html(&book.story.author),
+                short_date(book.story.time),
+                discussion.comment_count()
             )
             .unwrap();
         }
-        ThreadKind::Article => {
+        BookBody::Article => {
             writeln!(
                 out,
                 "<div class=\"story-meta\">by {} &middot; {} &middot; {}</div>",
-                escape_html(&thread.story.author),
-                short_date(thread.story.time),
-                escape_html(&thread.source)
+                escape_html(&book.story.author),
+                short_date(book.story.time),
+                escape_html(&book.source)
             )
             .unwrap();
         }
     }
     write!(out, "<div class=\"story-link\">").unwrap();
-    if let Some(url) = &thread.story.url {
+    if let Some(url) = &book.story.url {
         write!(
             out,
             "<a href=\"{}\">{}</a>",
@@ -89,23 +90,23 @@ fn render_story(out: &mut String, thread: &Thread) {
         )
         .unwrap();
     }
-    if let Some(discussion_url) = &thread.story.discussion_url {
-        if thread.story.url.is_some() {
+    if let Some(discussion_url) = &book.story.discussion_url {
+        if book.story.url.is_some() {
             write!(out, " &middot; ").unwrap();
         }
         write!(
             out,
             "<a href=\"{}\">{} discussion</a>",
             escape_html(discussion_url),
-            escape_html(&thread.source)
+            escape_html(&book.source)
         )
         .unwrap();
     }
     writeln!(out, "</div>").unwrap();
-    if let Some(html) = &thread.story.text_html
+    if let Some(html) = &book.story.text_html
         && !html.trim().is_empty()
     {
-        let html = if thread.kind == ThreadKind::Discussion {
+        let html = if matches!(book.body, BookBody::Discussion(_)) {
             demote_h1(html)
         } else {
             html.to_string()
@@ -114,8 +115,8 @@ fn render_story(out: &mut String, thread: &Thread) {
     }
 }
 
-fn render_comments(out: &mut String, thread: &Thread, max_indent_depth: usize) {
-    let annotated = annotate_comments(&thread.comments);
+fn render_comments(out: &mut String, comments: &[Comment], max_indent_depth: usize) {
+    let annotated = annotate_comments(comments);
     let mut next_comment_id = 1;
     let top_level_count = annotated.len();
     for (index, node) in annotated.iter().enumerate() {
@@ -315,7 +316,7 @@ fn short_date(time: DateTime<Utc>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Story, Thread, comment_stats};
+    use crate::model::Story;
     use chrono::TimeZone;
 
     fn time() -> DateTime<Utc> {
@@ -332,10 +333,8 @@ mod tests {
         }
     }
 
-    fn thread(kind: ThreadKind, comments: Vec<Comment>) -> Thread {
-        let comment_count = comment_stats(&comments).count;
-        Thread {
-            kind,
+    fn discussion(comments: Vec<Comment>) -> Book {
+        Book {
             story: Story {
                 id: "42".to_string(),
                 title: "Story".to_string(),
@@ -346,9 +345,7 @@ mod tests {
                 time: time(),
                 text_html: None,
             },
-            comments,
-            comment_count,
-            max_depth: 0,
+            body: BookBody::discussion(comments),
             source: "hn".to_string(),
             source_slug: "hn".to_string(),
         }
@@ -356,16 +353,13 @@ mod tests {
 
     #[test]
     fn one_heading_per_top_level() {
-        let thread = thread(
-            ThreadKind::Discussion,
-            vec![
-                comment("a", "<p>one</p>", 0, vec![]),
-                comment("b", "<p>two</p>", 0, vec![]),
-                comment("c", "<p>three</p>", 0, vec![]),
-            ],
-        );
+        let book = discussion(vec![
+            comment("a", "<p>one</p>", 0, vec![]),
+            comment("b", "<p>two</p>", 0, vec![]),
+            comment("c", "<p>three</p>", 0, vec![]),
+        ]);
 
-        let html = render_html(&thread, 5);
+        let html = render_html(&book, 5);
 
         assert_eq!(html.matches("class=\"t-head\"").count(), 3);
         assert!(!html.contains("class=\"chunk\""));
@@ -376,17 +370,14 @@ mod tests {
 
     #[test]
     fn heading_has_author_and_escaped_snippet() {
-        let thread = thread(
-            ThreadKind::Discussion,
-            vec![comment(
-                "a&b",
-                "<p>Tom &amp; Jerry <b>quoted</b> < raw > text with enough words to truncate neatly at a boundary</p>",
-                0,
-                vec![],
-            )],
-        );
+        let book = discussion(vec![comment(
+            "a&b",
+            "<p>Tom &amp; Jerry <b>quoted</b> < raw > text with enough words to truncate neatly at a boundary</p>",
+            0,
+            vec![],
+        )]);
 
-        let html = render_html(&thread, 5);
+        let html = render_html(&book, 5);
         let heading = html.lines().find(|line| line.contains("t-head")).unwrap();
 
         assert!(heading.contains("a&amp;b &middot; Tom &amp; Jerry quoted"));
@@ -404,18 +395,15 @@ mod tests {
 
     #[test]
     fn comment_body_headings_neutralized() {
-        let mut thread = thread(
-            ThreadKind::Discussion,
-            vec![comment(
-                "a",
-                "<h1>Big</h1><h2 class=\"x\">Small</h2>",
-                0,
-                vec![],
-            )],
-        );
-        thread.story.text_html = Some("<h1>Selftext</h1><h2>Already smaller</h2>".to_string());
+        let mut book = discussion(vec![comment(
+            "a",
+            "<h1>Big</h1><h2 class=\"x\">Small</h2>",
+            0,
+            vec![],
+        )]);
+        book.story.text_html = Some("<h1>Selftext</h1><h2>Already smaller</h2>".to_string());
 
-        let html = render_html(&thread, 5);
+        let html = render_html(&book, 5);
 
         assert!(html.contains("<div class=\"c-hd\">Big</div><div class=\"c-hd\">Small</div>"));
         assert!(
@@ -440,9 +428,9 @@ mod tests {
             ],
         );
         let second = comment("second", "<p>second</p>", 0, vec![]);
-        let thread = thread(ThreadKind::Discussion, vec![first, second]);
+        let book = discussion(vec![first, second]);
 
-        let html = render_html(&thread, 5);
+        let html = render_html(&book, 5);
 
         assert!(html.contains("id=\"c2\""));
         assert!(html.contains("href=\"#c8\">skip 5 replies"));
@@ -454,29 +442,23 @@ mod tests {
         let children = (0..4)
             .map(|index| comment(&format!("child{index}"), "<p>child</p>", 1, vec![]))
             .collect::<Vec<_>>();
-        let thread = thread(
-            ThreadKind::Discussion,
-            vec![comment("parent", "<p>parent</p>", 0, children)],
-        );
+        let book = discussion(vec![comment("parent", "<p>parent</p>", 0, children)]);
 
-        let html = render_html(&thread, 5);
+        let html = render_html(&book, 5);
 
         assert!(!html.contains("c-skip"));
     }
 
     #[test]
     fn top_level_head_is_date_only() {
-        let thread = thread(
-            ThreadKind::Discussion,
-            vec![comment(
-                "top",
-                "<p>top</p>",
-                0,
-                vec![comment("child", "<p>child</p>", 1, vec![])],
-            )],
-        );
+        let book = discussion(vec![comment(
+            "top",
+            "<p>top</p>",
+            0,
+            vec![comment("child", "<p>child</p>", 1, vec![])],
+        )]);
 
-        let html = render_html(&thread, 5);
+        let html = render_html(&book, 5);
         let heads = html
             .lines()
             .filter(|line| line.contains("class=\"c-head\""))
