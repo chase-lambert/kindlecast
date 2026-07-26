@@ -99,6 +99,12 @@ where
     F: FnMut(&Url, u64) -> Result<Vec<u8>>,
 {
     let document = Document::from(html);
+    // Pandoc externalizes surviving inline SVG as `.svgz` EPUB assets. Besides
+    // being outside kindlecast's JPEG/PNG compatibility policy, malformed
+    // source SVG can then make the entire EPUB invalid. Remove it before the
+    // empty-image fast path so icon-only documents cannot bypass this boundary.
+    document.select("svg").remove();
+    remove_active_content(&document);
     document.select("picture source").remove();
     document.select("img").remove_attr("srcset");
 
@@ -211,6 +217,29 @@ where
         html: document.html().to_string(),
         stats,
     })
+}
+
+fn remove_active_content(document: &Document) {
+    for node in document.select("*").nodes() {
+        let event_handlers = node
+            .attrs()
+            .into_iter()
+            .map(|attribute| attribute.name.local.to_string())
+            .filter(|name| name.starts_with("on"))
+            .collect::<Vec<_>>();
+        for name in event_handlers {
+            node.remove_attr(&name);
+        }
+    }
+
+    for node in document.select("[href]").nodes() {
+        if node.attr("href").is_some_and(|href| {
+            Url::parse(href.trim())
+                .is_ok_and(|url| matches!(url.scheme(), "javascript" | "vbscript" | "data"))
+        }) {
+            node.remove_attr("href");
+        }
+    }
 }
 
 struct EncodedImage {
@@ -414,6 +443,11 @@ mod tests {
                    srcset="https://cdn.example/huge.png 2x"
                    alt="Expo">
             </picture>
+            <figcaption>
+              Caption before
+              <svg><text>vector-only text</text></svg>
+              Caption after
+            </figcaption>
         </body></html>"#;
 
         let result = optimize_html_with_fetch(
@@ -436,7 +470,63 @@ mod tests {
         assert!(!result.html.contains("https://cdn.example"));
         assert!(!result.html.contains("data-src"));
         assert!(!result.html.contains("srcset"));
+        assert!(!result.html.contains("<svg"));
+        assert!(!result.html.contains("vector-only text"));
+        assert!(result.html.contains("Caption before"));
+        assert!(result.html.contains("Caption after"));
         assert!(result.html.contains(r#"<h1 class="t-head">Chapter</h1>"#));
+    }
+
+    #[test]
+    fn removes_inline_svg_before_empty_image_fast_path() {
+        let dir = tempdir().unwrap();
+        let result = optimize_html_with_fetch(
+            r#"<html><body><p>Before</p><svg><text>vector-only text</text></svg><p>After</p></body></html>"#,
+            None,
+            dir.path(),
+            &|_| {},
+            |_, _| panic!("SVG-only HTML must not trigger an image fetch"),
+        )
+        .unwrap();
+
+        assert_eq!(result.stats.references, 0);
+        assert!(!result.html.contains("<svg"));
+        assert!(!result.html.contains("vector-only text"));
+        assert!(result.html.contains("<p>Before</p>"));
+        assert!(result.html.contains("<p>After</p>"));
+    }
+
+    #[test]
+    fn removes_active_behavior_but_keeps_visible_link_text() {
+        let dir = tempdir().unwrap();
+        let result = optimize_html_with_fetch(
+            r##"<html><body onload="alert('load')"><p ONCLICK="alert('event')">Before</p><a href="JaVaScRiPt:alert('link')" onmouseover="alert('hover')">Readable label</a><a href="data:text/html,active">Data link</a><a href="#chapter">Chapter link</a><a href="https://example.com/read">Web link</a><p>After</p></body></html>"##,
+            None,
+            dir.path(),
+            &|_| {},
+            |_, _| panic!("active-content-only HTML must not trigger an image fetch"),
+        )
+        .unwrap();
+
+        assert!(!result.html.contains("onload"));
+        assert!(!result.html.contains("onclick"));
+        assert!(!result.html.contains("onmouseover"));
+        assert!(!result.html.to_ascii_lowercase().contains("javascript:"));
+        assert!(!result.html.contains("data:text/html"));
+        assert!(result.html.contains("<a>Readable label</a>"));
+        assert!(result.html.contains("<a>Data link</a>"));
+        assert!(
+            result
+                .html
+                .contains(r##"<a href="#chapter">Chapter link</a>"##)
+        );
+        assert!(
+            result
+                .html
+                .contains(r#"<a href="https://example.com/read">Web link</a>"#)
+        );
+        assert!(result.html.contains("<p>Before</p>"));
+        assert!(result.html.contains("<p>After</p>"));
     }
 
     #[test]

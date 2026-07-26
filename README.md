@@ -95,4 +95,6 @@ Rendering goes through pandoc (`html → epub3`, `--split-level=1`), so every `<
 
 Kindle depth styling relies on `margin-left`; left borders are progressive enhancement and may be dropped by Enhanced Typesetting. Headings inside comment bodies are neutralized (they'd otherwise fragment chapters), and `# headings` in Reddit selftext are demoted to `<h2>`.
 
-Kindlecast decodes JPEG, PNG, GIF, and WebP input and packages images as JPEG or PNG for Kindle compatibility. AVIF, JPEG XL, SVG, unknown formats, and images that exceed the download or decoded-pixel budgets are omitted with their alt text preserved as reading context.
+Kindlecast decodes JPEG, PNG, GIF, and WebP input and packages images as JPEG or PNG for Kindle compatibility. AVIF, JPEG XL, remote SVG, unknown formats, and images that exceed the download or decoded-pixel budgets are omitted with their alt text preserved as reading context. Inline SVG is removed before packaging; unlabeled decorative vectors disappear without an omission marker.
+
+Extracted pages are packaged as passive reading documents. Inline event handlers and `javascript:`, `vbscript:`, or `data:` link targets are removed while their visible text remains.

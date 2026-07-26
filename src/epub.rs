@@ -166,7 +166,7 @@ mod tests {
     use std::io::Read;
     use tempfile::tempdir;
 
-    fn article_with_image() -> Book {
+    fn article_with_unsupported_content() -> Book {
         // Instantly-refused target so image optimization fails without DNS/network wait.
         let remote = "http://127.0.0.1:1/photo.png";
         Book {
@@ -178,7 +178,9 @@ mod tests {
                 author: "author".to_string(),
                 points: None,
                 time: Utc.with_ymd_and_hms(2026, 7, 8, 12, 0, 0).unwrap(),
-                text_html: Some(format!(r#"<p>Hello</p><img src="{remote}" alt="Photo">"#)),
+                text_html: Some(format!(
+                    r#"<p>Hello</p><figure><img src="{remote}" alt="Photo"><figcaption>Caption before <svg><text>vector-only text</text></svg> Caption after</figcaption></figure><p onclick="alert('event')"><a href="javascript:alert('link')" onmouseover="alert('hover')">Readable active-link label</a></p>"#
+                )),
             },
             body: BookBody::Article,
             source: "example.com".to_string(),
@@ -266,7 +268,7 @@ mod tests {
     #[test]
     fn book_html_is_optimized_document_not_pre_image_render() {
         let dir = tempdir().unwrap();
-        let book = article_with_image();
+        let book = article_with_unsupported_content();
         let remote = "http://127.0.0.1:1/photo.png";
         // Real optimize path; image fetch fails immediately (connection refused).
         // Book HTML must be the optimized document (omission marker), not the raw remote URL.
@@ -309,9 +311,9 @@ mod tests {
     }
 
     #[test]
-    fn pandoc_epub_omits_remote_images_but_keeps_story_links() {
+    fn pandoc_epub_keeps_only_passive_supported_content() {
         let dir = tempdir().unwrap();
-        let book = article_with_image();
+        let book = article_with_unsupported_content();
         let remote = "http://127.0.0.1:1/photo.png";
         let story_url = "https://example.com/post";
         let result = build_epub(
@@ -338,6 +340,47 @@ mod tests {
         assert!(
             all.contains(story_url),
             "exact story URL must remain as a remote anchor by design; missing {story_url}"
+        );
+        assert!(all.contains("Caption before"));
+        assert!(all.contains("Caption after"));
+        assert!(!all.contains("vector-only text"));
+        assert!(all.contains("Readable active-link label"));
+        assert!(!all.contains("onclick"));
+        assert!(!all.contains("onmouseover"));
+        assert!(!all.contains("javascript:"));
+        assert!(!all.to_ascii_lowercase().contains("<svg"));
+
+        let file = fs::File::open(&result.epub_path).expect("open EPUB inventory");
+        let mut archive = zip::ZipArchive::new(file).expect("EPUB is a zip");
+        let mut names = Vec::new();
+        let mut package = None;
+        for index in 0..archive.len() {
+            let mut entry = archive.by_index(index).expect("read EPUB entry");
+            let name = entry.name().to_string();
+            if name.ends_with("content.opf") {
+                let mut contents = String::new();
+                entry
+                    .read_to_string(&mut contents)
+                    .expect("read EPUB package manifest");
+                package = Some(contents);
+            }
+            names.push(name);
+        }
+        assert!(
+            names.iter().all(|name| {
+                let lower = name.to_ascii_lowercase();
+                !lower.ends_with(".svg") && !lower.ends_with(".svgz")
+            }),
+            "unsupported SVG asset escaped into EPUB: {names:?}"
+        );
+        let package = package.expect("EPUB package manifest must be present and readable");
+        assert!(
+            !package.contains("image/svg+xml"),
+            "unsupported SVG media type escaped into EPUB manifest: {package}"
+        );
+        assert!(
+            !package.contains("scripted"),
+            "passive EPUB was incorrectly marked as scripted: {package}"
         );
     }
 }
