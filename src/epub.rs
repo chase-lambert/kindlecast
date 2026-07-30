@@ -39,7 +39,7 @@ pub fn build_epub(
     )?;
     progress(&prepared.stats.summary());
     let html_path = temp.path().join("thread.html");
-    let css_path = temp.path().join("kindle.css");
+    let css_path = temp.path().join("reader.css");
     fs::write(&html_path, &prepared.html).context("failed to write temporary HTML")?;
     fs::write(&css_path, css).context("failed to write temporary CSS")?;
 

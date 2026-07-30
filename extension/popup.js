@@ -35,7 +35,7 @@ chrome.runtime.onMessage.addListener((message) => {
     setStatus(`${message.stage}: ${message.detail}`);
   } else if (message.status === "ok") {
     setWorking(false);
-    setStatus(message.emailed ? "Sent to Kindle." : "Downloaded EPUB.");
+    setStatus(message.emailed ? "EPUB emailed." : "EPUB downloaded.");
   } else if (message.status === "error") {
     setWorking(false);
     setStatus(message.message);

@@ -6,7 +6,7 @@ use std::path::PathBuf;
 #[command(
     author,
     version,
-    about = "Send articles and discussion threads to Kindle as EPUB"
+    about = "Turn articles and discussion threads into EPUBs"
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -96,7 +96,7 @@ impl Cli {
             }
             None => {
                 let url = self.url.ok_or_else(|| {
-                    anyhow::anyhow!("usage: kindlecast <url-or-hn-id> [--no-email]")
+                    anyhow::anyhow!("usage: rustypub <url-or-hn-id> [--no-email]")
                 })?;
                 Ok(Commands::Run(RunArgs {
                     url,

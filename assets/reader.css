@@ -1,3 +1,4 @@
+/* Conservative EPUB CSS: direct readers and Kindle conversion must both degrade cleanly. */
 body { font-family: Georgia, serif; line-height: 1.4; }
 h1.story-title { font-size: 1.5em; text-align: center; margin: 1em 0 0.5em; }
 h1.t-head { font-size: 0.85em; font-weight: bold; text-align: left; color: #444; margin: 0 0 0.8em; padding-bottom: 0.25em; border-bottom: 1px solid #888; }
@@ -20,9 +21,9 @@ figcaption { font-size: 0.8em; color: #555; font-style: italic; }
 .c-hd { font-weight: bold; margin: 0.6em 0 0.3em; }
 .c-body p { margin: 0.4em 0; text-indent: 0; }
 pre { font-family: "Courier New", monospace; font-size: 0.75em; white-space: pre-wrap;
-      word-wrap: break-word; margin: 0.5em 0; padding: 0.3em; background-color: #f2f2f2; }
+      word-wrap: break-word; overflow-wrap: break-word; margin: 0.5em 0; padding: 0.3em; background-color: #f2f2f2; }
 code { font-family: "Courier New", monospace; font-size: 0.85em; }
 blockquote { margin: 0.5em 0 0.5em 1em; font-style: italic; }
-table { border-collapse: collapse; margin: 1em 0; font-size: 0.8em; }
+table { border-collapse: collapse; max-width: 100%; margin: 1em 0; font-size: 0.8em; }
 th, td { border: 1px solid #999; padding: 0.15em 0.4em; text-align: left; }
 a { color: inherit; }

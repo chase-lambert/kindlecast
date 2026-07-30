@@ -772,29 +772,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "kindlecast"
-version = "0.2.0"
-dependencies = [
- "anyhow",
- "chrono",
- "clap",
- "dirs",
- "dom_query",
- "dom_smoothie",
- "html-escape",
- "image",
- "lettre",
- "regex",
- "serde",
- "serde_json",
- "tempfile",
- "toml",
- "ureq",
- "url",
- "zip",
-]
-
-[[package]]
 name = "lettre"
 version = "0.11.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1244,6 +1221,29 @@ name = "rustversion"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
+
+[[package]]
+name = "rustypub"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "clap",
+ "dirs",
+ "dom_query",
+ "dom_smoothie",
+ "html-escape",
+ "image",
+ "lettre",
+ "regex",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "toml",
+ "ureq",
+ "url",
+ "zip",
+]
 
 [[package]]
 name = "scopeguard"

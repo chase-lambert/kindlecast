@@ -54,8 +54,11 @@ pub fn run_job(options: JobOptions, progress: &dyn Fn(&str, &str)) -> Result<Job
 
     let should_email = !options.no_email;
     let config = Config::load_optional()?;
-    if should_email && config.is_none() {
-        bail!("email config missing; run kindlecast init");
+    if should_email {
+        let cfg = config
+            .as_ref()
+            .context("email config missing; run rustypub init")?;
+        cfg.ensure_email_configured()?;
     }
 
     progress("fetching", "matching URL");
@@ -67,7 +70,7 @@ pub fn run_job(options: JobOptions, progress: &dyn Fn(&str, &str)) -> Result<Job
     })?;
     progress("fetching", &fetch_summary(&book));
 
-    progress("rendering", "rendering Kindle HTML");
+    progress("rendering", "rendering book HTML");
     let output_dir = if options.email_only {
         None
     } else {
@@ -87,7 +90,7 @@ pub fn run_job(options: JobOptions, progress: &dyn Fn(&str, &str)) -> Result<Job
         .as_ref()
         .and_then(|cfg| cfg.css_override().transpose())
         .transpose()?
-        .unwrap_or_else(|| include_str!("../assets/kindle.css").to_string());
+        .unwrap_or_else(|| include_str!("../assets/reader.css").to_string());
 
     let _email_temp_dir;
     let epub_target_dir = match output_dir {
@@ -113,7 +116,7 @@ pub fn run_job(options: JobOptions, progress: &dyn Fn(&str, &str)) -> Result<Job
     }
 
     let emailed = if should_email {
-        let cfg = config.context("email config missing; run kindlecast init")?;
+        let cfg = config.context("email config missing; run rustypub init")?;
         let epub_size = email::epub_size(&build.epub_path)?;
         if epub_size > email::MAX_EMAIL_EPUB_BYTES {
             let diagnosis = email::oversized_epub_diagnosis(epub_size);
@@ -121,20 +124,20 @@ pub fn run_job(options: JobOptions, progress: &dyn Fn(&str, &str)) -> Result<Job
                 let recovery = preserve_email_only_epub(&build.epub_path, &cfg.output_dir());
                 match recovery {
                     Ok(path) => bail!(
-                        "{diagnosis}. Saved the completed book to {}. Upload it at https://www.amazon.com/sendtokindle",
+                        "{diagnosis}. Saved the completed book to {}. Import it through your reader's library or desktop app",
                         path.display()
                     ),
                     Err(error) => bail!(
-                        "{diagnosis}. The temporary book could not be preserved: {error:#}. Build again with --no-email or use Send to Kindle"
+                        "{diagnosis}. The temporary book could not be preserved: {error:#}. Build again with --no-email, then import the EPUB through your reader's library or desktop app"
                     ),
                 }
             }
             bail!(
-                "{diagnosis}. The completed book remains at {}. Upload it at https://www.amazon.com/sendtokindle",
+                "{diagnosis}. The completed book remains at {}. Import it through your reader's library or desktop app",
                 build.epub_path.display()
             );
         }
-        progress("emailing", "sending EPUB to Kindle");
+        progress("emailing", "sending EPUB attachment");
         email::send_epub(&cfg, &book.story.title, &book.source, &build.epub_path)?;
         true
     } else {
@@ -165,7 +168,7 @@ fn preserve_email_only_epub(epub_path: &Path, output_dir: &Path) -> Result<PathB
         let stem = epub_path
             .file_stem()
             .and_then(|stem| stem.to_str())
-            .unwrap_or("kindlecast");
+            .unwrap_or("rustypub");
         let extension = epub_path
             .extension()
             .and_then(|extension| extension.to_str())
@@ -201,7 +204,7 @@ fn run_cli(args: RunArgs) -> Result<()> {
     )?;
 
     if result.emailed {
-        eprintln!("emailed to Kindle");
+        eprintln!("emailed EPUB");
     }
     if !email_only && !result.file.as_os_str().is_empty() {
         println!("{}", result.file.display());
@@ -256,7 +259,7 @@ mod tests {
     #[test]
     fn json_url_with_cli_flag_is_not_native_host_invocation() {
         let args = vec![
-            "kindlecast".to_string(),
+            "rustypub".to_string(),
             "https://example.com/feed.json".to_string(),
             "--no-email".to_string(),
         ];
@@ -267,7 +270,7 @@ mod tests {
     #[test]
     fn extension_origin_is_native_host_invocation() {
         let args = vec![
-            "kindlecast".to_string(),
+            "rustypub".to_string(),
             "chrome-extension://abc/".to_string(),
         ];
 

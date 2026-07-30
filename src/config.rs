@@ -7,11 +7,15 @@ pub const DEFAULT_MAX_INDENT_DEPTH: usize = 5;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Config {
-    pub kindle_email: String,
+    #[serde(default)]
+    pub device_email: String,
+    #[serde(default)]
     pub from_email: String,
     #[serde(default = "default_smtp_host")]
     pub smtp_host: String,
+    #[serde(default)]
     pub smtp_username: String,
+    #[serde(default)]
     pub smtp_password: String,
     #[serde(default = "default_output_dir_string")]
     pub output_dir: String,
@@ -44,7 +48,7 @@ pub fn config_dir() -> PathBuf {
                 .unwrap_or_else(|| PathBuf::from("."))
                 .join(".config")
         })
-        .join("kindlecast")
+        .join("rustypub")
 }
 
 pub fn config_path() -> PathBuf {
@@ -78,7 +82,7 @@ impl Config {
     }
 
     pub fn css_override(&self) -> Result<Option<String>> {
-        let path = config_dir().join("kindle.css");
+        let path = config_dir().join("reader.css");
         if path.exists() {
             Ok(Some(fs::read_to_string(&path).with_context(|| {
                 format!("failed to read CSS override {}", path.display())
@@ -86,6 +90,27 @@ impl Config {
         } else {
             Ok(None)
         }
+    }
+
+    pub fn ensure_email_configured(&self) -> Result<()> {
+        let missing = [
+            ("device_email", self.device_email.as_str()),
+            ("from_email", self.from_email.as_str()),
+            ("smtp_host", self.smtp_host.as_str()),
+            ("smtp_username", self.smtp_username.as_str()),
+            ("smtp_password", self.smtp_password.as_str()),
+        ]
+        .into_iter()
+        .filter_map(|(name, value)| value.trim().is_empty().then_some(name))
+        .collect::<Vec<_>>();
+        if !missing.is_empty() {
+            anyhow::bail!(
+                "email settings missing ({}); edit {} or use --no-email",
+                missing.join(", "),
+                config_path().display()
+            );
+        }
+        Ok(())
     }
 }
 
@@ -96,11 +121,11 @@ pub fn init_config() -> Result<()> {
     let path = config_path();
     if !path.exists() {
         let sample = Config {
-            kindle_email: "you@kindle.com".to_string(),
-            from_email: "you@gmail.com".to_string(),
+            device_email: String::new(),
+            from_email: String::new(),
             smtp_host: default_smtp_host(),
-            smtp_username: "you@gmail.com".to_string(),
-            smtp_password: "gmail-app-password".to_string(),
+            smtp_username: String::new(),
+            smtp_password: String::new(),
             output_dir: default_output_dir_string(),
             max_indent_depth: DEFAULT_MAX_INDENT_DEPTH,
         };
@@ -109,15 +134,16 @@ pub fn init_config() -> Result<()> {
         set_private_permissions(&path)?;
     }
 
-    let css_path = dir.join("kindle.css");
+    let css_path = dir.join("reader.css");
     if !css_path.exists() {
-        fs::write(&css_path, include_str!("../assets/kindle.css"))
+        fs::write(&css_path, include_str!("../assets/reader.css"))
             .with_context(|| format!("failed to write {}", css_path.display()))?;
     }
 
     println!("Wrote {}", path.display());
-    println!("Edit smtp_username/from_email and smtp_password with a Gmail app password.");
-    println!("Make sure from_email is approved in Amazon's Personal Document E-mail List.");
+    println!("Set device_email to the address that accepts EPUB attachments for your reader.");
+    println!("Set the SMTP fields for the account that sends those attachments.");
+    println!("Some delivery services require from_email to be approved before they accept mail.");
     Ok(())
 }
 
@@ -145,4 +171,79 @@ fn set_private_permissions(path: &Path) -> Result<()> {
 #[cfg(not(unix))]
 fn set_private_permissions(_path: &Path) -> Result<()> {
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Config;
+
+    fn complete_email_config() -> Config {
+        toml::from_str(
+            r#"
+device_email = "reader@example.com"
+from_email = "sender@example.com"
+smtp_username = "sender@example.com"
+smtp_password = "secret"
+"#,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn save_only_config_can_omit_email_settings() {
+        let config: Config = toml::from_str(
+            r#"
+output_dir = "~/Books"
+max_indent_depth = 4
+"#,
+        )
+        .unwrap();
+
+        assert!(config.device_email.is_empty());
+        assert!(config.from_email.is_empty());
+        assert_eq!(config.smtp_host, "smtp.gmail.com");
+        assert!(config.ensure_email_configured().is_err());
+    }
+
+    #[test]
+    fn complete_email_settings_validate_together() {
+        let config = complete_email_config();
+
+        config.ensure_email_configured().unwrap();
+    }
+
+    #[test]
+    fn every_email_setting_is_required_for_delivery() {
+        for field in [
+            "device_email",
+            "from_email",
+            "smtp_host",
+            "smtp_username",
+            "smtp_password",
+        ] {
+            let mut config = complete_email_config();
+            match field {
+                "device_email" => config.device_email.clear(),
+                "from_email" => config.from_email.clear(),
+                "smtp_host" => config.smtp_host.clear(),
+                "smtp_username" => config.smtp_username.clear(),
+                "smtp_password" => config.smtp_password.clear(),
+                _ => unreachable!(),
+            }
+
+            let message = config.ensure_email_configured().unwrap_err().to_string();
+            assert!(
+                message.contains(field),
+                "missing field not named: {message}"
+            );
+            assert!(
+                message.contains("--no-email"),
+                "save-only recovery not named: {message}"
+            );
+            assert!(
+                message.contains("config.toml"),
+                "config path not named: {message}"
+            );
+        }
+    }
 }

@@ -138,7 +138,11 @@ pub fn domain_label(url: &str) -> String {
         .to_string()
 }
 
-pub const USER_AGENT: &str = "linux:kindlecast:0.2 (by /u/chaselambert)";
+pub const USER_AGENT: &str = concat!(
+    "linux:rustypub:",
+    env!("CARGO_PKG_VERSION"),
+    " (by /u/chaselambert)"
+);
 
 #[cfg(test)]
 mod tests {

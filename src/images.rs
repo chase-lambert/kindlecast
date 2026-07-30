@@ -100,7 +100,7 @@ where
 {
     let document = Document::from(html);
     // Pandoc externalizes surviving inline SVG as `.svgz` EPUB assets. Besides
-    // being outside kindlecast's JPEG/PNG compatibility policy, malformed
+    // being outside RustyPub's JPEG/PNG compatibility policy, malformed
     // source SVG can then make the entire EPUB invalid. Remove it before the
     // empty-image fast path so icon-only documents cannot bypass this boundary.
     document.select("svg").remove();
@@ -270,7 +270,7 @@ fn optimize_image(bytes: &[u8]) -> Result<EncodedImage> {
     let orientation = decoder.orientation().unwrap_or(Orientation::NoTransforms);
     let mut image = DynamicImage::from_decoder(decoder).context("failed to decode image pixels")?;
     image.apply_orientation(orientation);
-    let image = resize_for_kindle(image);
+    let image = resize_for_reader(image);
 
     if has_meaningful_alpha(&image) {
         encode_png(&image)
@@ -292,7 +292,7 @@ fn validate_decoded_image(width: u32, height: u32, decoded_bytes: u64) -> Result
     Ok(())
 }
 
-fn resize_for_kindle(image: DynamicImage) -> DynamicImage {
+fn resize_for_reader(image: DynamicImage) -> DynamicImage {
     let (width, height) = image.dimensions();
     if width <= MAX_IMAGE_EDGE && height <= MAX_IMAGE_EDGE {
         image

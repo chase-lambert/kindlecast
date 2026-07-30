@@ -1,4 +1,4 @@
-const HOST = "com.chaselambert.kindlecast";
+const HOST = "com.chaselambert.rustypub";
 let port = null;
 let badgeClearTimer = null;
 
