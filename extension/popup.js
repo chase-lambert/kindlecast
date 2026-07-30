@@ -1,3 +1,4 @@
+const extensionApi = globalThis.browser ?? globalThis.chrome;
 const sendButton = document.getElementById("send");
 const downloadButton = document.getElementById("download");
 const statusLine = document.getElementById("status");
@@ -18,30 +19,6 @@ function setWorking(working) {
   downloadButton.disabled = working || !currentUrl;
 }
 
-chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-  currentUrl = tabs[0]?.url || null;
-  currentTabId = tabs[0]?.id || null;
-  if (!currentUrl || !/^https?:\/\//.test(currentUrl)) {
-    currentUrl = null;
-    setWorking(false);
-    setStatus("Open a web page first.");
-    return;
-  }
-  setWorking(false);
-});
-
-chrome.runtime.onMessage.addListener((message) => {
-  if (message.status === "progress") {
-    setStatus(`${message.stage}: ${message.detail}`);
-  } else if (message.status === "ok") {
-    setWorking(false);
-    setStatus(message.emailed ? "EPUB emailed." : "EPUB downloaded.");
-  } else if (message.status === "error") {
-    setWorking(false);
-    setStatus(message.message);
-  }
-});
-
 function isThreadUrl(url) {
   return THREAD_SITES.some((pattern) => pattern.test(url));
 }
@@ -49,7 +26,7 @@ function isThreadUrl(url) {
 async function capturePageHtml() {
   if (!currentTabId || isThreadUrl(currentUrl)) return null;
   try {
-    const results = await chrome.scripting.executeScript({
+    const results = await extensionApi.scripting.executeScript({
       target: { tabId: currentTabId },
       func: () => document.documentElement.outerHTML,
     });
@@ -64,8 +41,51 @@ async function start(action) {
   setWorking(true);
   setStatus("Starting...");
   const pageHtml = await capturePageHtml();
-  chrome.runtime.sendMessage({ action, url: currentUrl, pageHtml });
+  try {
+    await extensionApi.runtime.sendMessage({
+      action,
+      url: currentUrl,
+      pageHtml,
+    });
+  } catch (error) {
+    setWorking(false);
+    setStatus(error.message || "Could not reach the extension helper.");
+  }
 }
+
+extensionApi.runtime.onMessage.addListener((message) => {
+  if (message.status === "progress") {
+    setStatus(`${message.stage}: ${message.detail}`);
+  } else if (message.status === "ok") {
+    setWorking(false);
+    setStatus(message.emailed ? "EPUB emailed." : "EPUB downloaded.");
+  } else if (message.status === "error") {
+    setWorking(false);
+    setStatus(message.message);
+  }
+});
 
 sendButton.addEventListener("click", () => start("send"));
 downloadButton.addEventListener("click", () => start("download"));
+
+async function init() {
+  const tabs = await extensionApi.tabs.query({
+    active: true,
+    currentWindow: true,
+  });
+  currentUrl = tabs[0]?.url || null;
+  currentTabId = tabs[0]?.id || null;
+  if (!currentUrl || !/^https?:\/\//.test(currentUrl)) {
+    currentUrl = null;
+    currentTabId = null;
+    setWorking(false);
+    setStatus("Open a web page first.");
+    return;
+  }
+  setWorking(false);
+}
+
+const initialization = init().catch((error) => {
+  setWorking(false);
+  setStatus(error.message || "Could not read the current tab.");
+});

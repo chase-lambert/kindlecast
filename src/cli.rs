@@ -60,14 +60,24 @@ pub struct RunArgs {
 
 #[derive(Args, Clone)]
 pub struct InstallArgs {
+    #[command(subcommand)]
+    pub browser: InstallBrowser,
+
+    #[arg(long, global = true)]
+    pub dry_run: bool,
+}
+
+#[derive(Subcommand, Clone, Debug)]
+pub enum InstallBrowser {
+    Chrome(ChromiumInstallArgs),
+    Chromium(ChromiumInstallArgs),
+    Firefox,
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct ChromiumInstallArgs {
     #[arg(long)]
     pub extension_id: String,
-
-    #[arg(long)]
-    pub firefox_id: Option<String>,
-
-    #[arg(long)]
-    pub dry_run: bool,
 }
 
 pub enum Commands {
@@ -116,4 +126,47 @@ fn reject_run_flags(has_run_flags: bool) -> Result<()> {
         bail!("run options can only be used with a thread URL or `run`");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn install_chrome_parses_extension_id() {
+        let cli =
+            Cli::try_parse_from(["rustypub", "install", "chrome", "--extension-id", "abc123"])
+                .unwrap();
+        match cli.into_command().unwrap() {
+            Commands::Install(args) => match args.browser {
+                InstallBrowser::Chrome(browser) => {
+                    assert_eq!(browser.extension_id, "abc123");
+                    assert!(!args.dry_run);
+                }
+                other => panic!("expected chrome, got {other:?}"),
+            },
+            _ => panic!("expected install command"),
+        }
+    }
+
+    #[test]
+    fn install_firefox_needs_no_extension_id() {
+        let cli = Cli::try_parse_from(["rustypub", "install", "firefox", "--dry-run"]).unwrap();
+        match cli.into_command().unwrap() {
+            Commands::Install(args) => {
+                assert!(matches!(args.browser, InstallBrowser::Firefox));
+                assert!(args.dry_run);
+            }
+            _ => panic!("expected install command"),
+        }
+    }
+
+    #[test]
+    fn legacy_install_extension_id_flag_is_rejected() {
+        assert!(
+            Cli::try_parse_from(["rustypub", "install", "--extension-id", "abc"]).is_err(),
+            "legacy flat install flags must fail under browser subcommands"
+        );
+    }
 }

@@ -299,6 +299,23 @@ mod tests {
     }
 
     #[test]
+    fn firefox_manifest_path_argument_is_native_host_invocation() {
+        // Firefox launches the host with the path to the extension manifest as
+        // argv[1]. Entry-point routing only looks at that path; the add-on ID
+        // (later argv) is not re-checked here — browser allowlists own trust.
+        let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("extension/manifest.firefox.json");
+        let manifest = std::fs::canonicalize(manifest).unwrap();
+        let args = vec![
+            "rustypub".to_string(),
+            manifest.display().to_string(),
+            crate::install::FIREFOX_EXTENSION_ID.to_string(),
+        ];
+
+        assert!(super::is_native_host_invocation(&args));
+    }
+
+    #[test]
     fn email_only_recovery_preserves_book_without_overwriting() {
         let temp = tempdir().unwrap();
         let build_dir = temp.path().join("build");

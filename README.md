@@ -24,8 +24,12 @@ chapter-progress footer measures the current thread.
 [Pandoc](https://pandoc.org/installing.html) is required. Then install RustyPub:
 
 ```sh
-cargo install --path .
+cargo install --path . --force --locked
 ```
+
+`--force` replaces an existing install in place so the absolute path recorded
+for browser native messaging stays valid; `--locked` keeps the build on the
+committed `Cargo.lock`.
 
 Build a book from an HN ID or a supported URL:
 
@@ -63,23 +67,115 @@ smaller [20 MB attachment limit](https://help.dropbox.com/create-upload/email-fi
 
 ## Browser extension
 
-The extension sends the current page to RustyPub. Install it in this order:
+The extension sends the current page to the RustyPub native helper. Chrome,
+Chromium, and Firefox share one bundle under `extension/`. Data handling is
+described in [PRIVACY.md](PRIVACY.md).
 
-1. Run `cargo install --path .`.
-2. Load `extension/` as an unpacked Chrome extension and copy its extension ID.
-3. Register the native host:
+Browser integration is currently documented and tested for **Linux** (same
+boundary as Chrome/Chromium native-host paths under `~/.config` and Firefox
+under `~/.mozilla/native-messaging-hosts`).
+
+Install the native helper to Cargo's binary directory first:
+
+```sh
+cargo install --path . --force --locked
+```
+
+The browser registration records that installed helper's absolute path. Prefer
+this over registering `target/release/rustypub`, which breaks when the tree is
+cleaned or rebuilt elsewhere. When updating the helper, rerun the same
+`cargo install` command to replace the binary in place. Re-run
+`rustypub install …` only if the registered path changed (for example after
+migrating off a `target/` registration); a same-path Cargo reinstall keeps the
+existing manifest valid.
+
+Chrome and Firefox cannot share one MV3 `background` block: Chrome rejects
+`background.scripts`, and Firefox still requires it (service workers alone are
+disabled). Shared scripts live in `extension/`; `manifest.json` is Chrome-ready,
+and `manifest.firefox.json` is the Firefox overlay. Use
+`scripts/firefox-package.sh` to stage or package Firefox builds.
+
+### Chrome / Chromium
+
+1. Load `extension/` as an unpacked extension and copy its extension ID.
+2. Register the native host for the browser you use (from the installed binary):
 
    ```sh
-   rustypub install --extension-id CHROME_EXTENSION_ID
+   rustypub install chrome --extension-id CHROME_EXTENSION_ID
+   # or
+   rustypub install chromium --extension-id CHROMIUM_EXTENSION_ID
    ```
 
-For Firefox, also pass `--firefox-id rustypub@example.com`, matching
-`browser_specific_settings.gecko.id` in the extension manifest.
+Use `--dry-run` first to print the native messaging manifest without writing it.
+When updating an existing installation, reinstall the helper and reload the
+unpacked extension so the browser scripts and native protocol stay in sync.
+
+The installer CLI is browser-specific (breaking change from older
+`rustypub install --extension-id … [--firefox-id …]`):
+
+| Old | New |
+|-----|-----|
+| `install --extension-id ID` | `install chrome --extension-id ID` and/or `install chromium --extension-id ID` |
+| `… --firefox-id …` | `install firefox` (add-on ID is fixed) |
+
+### Firefox
+
+Register the native host from the installed binary (the add-on ID is fixed as
+`@rustypub.chaselambert`):
+
+```sh
+rustypub install firefox
+```
+
+For repeated Firefox development, stage an inspectable tree (only under
+`target/`, and only replaces a prior stage):
+
+```sh
+bash scripts/firefox-package.sh stage
+# optional: bash scripts/firefox-package.sh stage target/extension-firefox-wip
+```
+
+Then open `about:debugging`, choose “This Firefox”, click “Load Temporary
+Add-on”, and select `target/extension-firefox/manifest.json`. Temporary add-ons
+are removed when Firefox restarts. The native host registration itself is
+durable and survives browser restarts once it points at the Cargo-installed
+binary.
+
+For a ZIP (Mozilla lint runs first; staging is disposable):
+
+```sh
+bash scripts/firefox-package.sh build
+# or: bash scripts/firefox-package.sh lint
+```
+
+The package lands in `web-ext-artifacts/`. For a durable extension installation
+in standard Firefox, submit that ZIP for unlisted Mozilla signing (after
+vacation / when AMO credentials are available), or sign a staged tree:
+
+```sh
+bash scripts/firefox-package.sh stage
+npx --yes web-ext@10.5.0 sign \
+  --source-dir target/extension-firefox \
+  --channel unlisted \
+  --api-key "$WEB_EXT_API_KEY" \
+  --api-secret "$WEB_EXT_API_SECRET"
+```
+
+Install the resulting signed `.xpi` from Firefox’s “Install Add-on From File”
+command. Signing needs an
+[addons.mozilla.org developer account](https://addons.mozilla.org/developers/)
+and a privacy-policy URL pointing at [PRIVACY.md](PRIVACY.md).
+
+(`extension/prepare-firefox.sh` remains a thin wrapper around
+`scripts/firefox-package.sh stage`.)
+
+### Behavior notes
 
 The extension captures rendered pages when useful, including Reddit and
-JavaScript-heavy articles. On Reddit, only comments already visible in the page
-are included; “load more” links are not expanded. CLI Reddit access can fail
-when Reddit returns HTTP 403, so the extension is the more reliable route.
+JavaScript-heavy articles. Capture is skipped for Hacker News and Lobsters
+thread URLs. On Reddit, only comments already visible in the page are included;
+“load more” links are not expanded. CLI Reddit access can fail when Reddit
+returns HTTP 403, so the extension is the more reliable route.
 
 Flatpak browsers generally cannot launch the native host; use the RPM/deb browser
 build for the extension.
