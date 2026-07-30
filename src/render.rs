@@ -12,6 +12,9 @@ struct AnnotatedComment<'a> {
     comment: &'a Comment,
     /// Number of comments in this subtree excluding self (children + deeper).
     descendants: usize,
+    /// Replies the budget cut from anywhere in this subtree. Frontier counts
+    /// partition omissions, so summing them cannot double-count.
+    omitted: usize,
     children: Vec<AnnotatedComment<'a>>,
 }
 
@@ -34,9 +37,12 @@ fn annotate_comments(comments: &[Comment]) -> Vec<AnnotatedComment<'_>> {
         .map(|comment| {
             let children = annotate_comments(&comment.children);
             let descendants = children.iter().map(|child| 1 + child.descendants).sum();
+            let omitted =
+                comment.omitted_replies + children.iter().map(|child| child.omitted).sum::<usize>();
             AnnotatedComment {
                 comment,
                 descendants,
+                omitted,
                 children,
             }
         })
@@ -54,16 +60,37 @@ fn render_story(out: &mut String, book: &Book) {
     // attributes from <p>, so p-level classes never reach the EPUB.
     match &book.body {
         BookBody::Discussion(discussion) => {
+            // When the budget cut the book short, the reader learns it from the
+            // book itself rather than from the terminal that built it. Three
+            // cases, because round-robin selection usually seats every thread
+            // and cuts replies instead — reporting only dropped threads would
+            // call such a book complete.
+            let extent = match (discussion.is_truncated(), discussion.all_threads_included()) {
+                (false, _) => format!("{} comments", discussion.comment_count()),
+                (true, true) => format!(
+                    "{} of {} comments &middot; all {} threads",
+                    discussion.comment_count(),
+                    discussion.total_comment_count(),
+                    discussion.total_threads()
+                ),
+                (true, false) => format!(
+                    "{} of {} comments &middot; {} of {} threads",
+                    discussion.comment_count(),
+                    discussion.total_comment_count(),
+                    discussion.included_threads(),
+                    discussion.total_threads()
+                ),
+            };
             writeln!(
                 out,
-                "<div class=\"story-meta\">{}by {} &middot; {} &middot; {} comments</div>",
+                "<div class=\"story-meta\">{}by {} &middot; {} &middot; {}</div>",
                 book.story
                     .points
                     .map(|points| format!("{points} points &middot; "))
                     .unwrap_or_default(),
                 escape_html(&book.story.author),
                 short_date(book.story.time),
-                discussion.comment_count()
+                extent
             )
             .unwrap();
         }
@@ -124,6 +151,19 @@ fn render_comments(out: &mut String, comments: &[Comment], max_indent_depth: usi
         )
         .unwrap();
         let subtree_size = 1 + node.descendants;
+        // Frontier markers sit where each cut happened, which on a deep thread
+        // is at the bottom of a long chain. Without this line a chapter that
+        // kept 18 of 436 comments would read as a small thread until it
+        // abruptly ends.
+        if node.omitted > 0 {
+            writeln!(
+                out,
+                "<div class=\"t-info\">showing {} of {} comments</div>",
+                subtree_size,
+                subtree_size + node.omitted
+            )
+            .unwrap();
+        }
         let thread_end_comment_id = next_comment_id + subtree_size - 1;
         let next_thread_id = (thread_index < top_level_count).then_some(thread_index + 1);
         render_comment(
@@ -199,6 +239,23 @@ fn render_comment(
             next_thread_id,
             false,
         );
+    }
+    // After the included replies, where the cut ones would have been. Not an
+    // `a.c-skip`: this is disclosure, not navigation, and keeping it out of that
+    // class keeps `epub::verify_structure` checking only real link targets.
+    if comment.omitted_replies > 0 {
+        let reply_depth = (comment.depth + 1).min(max_indent_depth);
+        writeln!(
+            out,
+            "<div class=\"c-omitted d{reply_depth}\">{} {} omitted</div>",
+            comment.omitted_replies,
+            if comment.omitted_replies == 1 {
+                "reply"
+            } else {
+                "replies"
+            }
+        )
+        .unwrap();
     }
 }
 
@@ -298,6 +355,7 @@ mod tests {
             html: sanitize::fragment(html, Region::CommentBody),
             depth,
             children,
+            omitted_replies: 0,
         }
     }
 
@@ -317,6 +375,170 @@ mod tests {
             source: "hn".to_string(),
             source_slug: "hn".to_string(),
         }
+    }
+
+    #[test]
+    fn untruncated_meta_reports_a_plain_comment_count() {
+        let book = discussion(vec![
+            comment("a", "<p>one</p>", 0, vec![]),
+            comment("b", "<p>two</p>", 0, vec![]),
+        ]);
+
+        let html = render_html(&book, 5);
+        let meta = html
+            .lines()
+            .find(|line| line.contains("story-meta"))
+            .unwrap();
+
+        assert!(meta.contains("2 comments"));
+        assert!(!meta.contains("threads"));
+    }
+
+    fn budgeted(threads: Vec<Comment>, budget: usize) -> Book {
+        let mut book = discussion(vec![]);
+        book.body = BookBody::Discussion(crate::model::Discussion::with_budget_for_test(
+            threads, budget,
+        ));
+        book
+    }
+
+    fn meta_line(html: &str) -> &str {
+        html.lines()
+            .find(|line| line.contains("story-meta"))
+            .unwrap()
+    }
+
+    #[test]
+    fn truncated_meta_reports_partial_comments_when_every_thread_survives() {
+        // The shape round-robin actually produces on a mega-thread, and the one
+        // a thread-based truncation check would have reported as complete.
+        let threads = (0..4)
+            .map(|index| {
+                comment(
+                    &format!("t{index}"),
+                    "<p>top</p>",
+                    0,
+                    vec![comment("child", "<p>child</p>", 1, vec![])],
+                )
+            })
+            .collect::<Vec<_>>();
+        let book = budgeted(threads, 6);
+
+        let html = render_html(&book, 5);
+
+        assert!(
+            meta_line(&html).contains("6 of 8 comments &middot; all 4 threads"),
+            "{}",
+            meta_line(&html)
+        );
+    }
+
+    #[test]
+    fn truncated_meta_reports_threads_when_the_budget_cannot_seat_them_all() {
+        let threads = (0..4)
+            .map(|index| comment(&format!("t{index}"), "<p>top</p>", 0, vec![]))
+            .collect::<Vec<_>>();
+        let book = budgeted(threads, 2);
+
+        let html = render_html(&book, 5);
+
+        assert!(
+            meta_line(&html).contains("2 of 4 comments &middot; 2 of 4 threads"),
+            "{}",
+            meta_line(&html)
+        );
+    }
+
+    #[test]
+    fn cut_replies_are_disclosed_where_they_were_cut() {
+        // Chain of 4, budget 2: the deepest kept comment lost 2 replies.
+        let deep = comment(
+            "a",
+            "<p>a</p>",
+            0,
+            vec![comment(
+                "b",
+                "<p>b</p>",
+                1,
+                vec![comment(
+                    "c",
+                    "<p>c</p>",
+                    2,
+                    vec![comment("d", "<p>d</p>", 3, vec![])],
+                )],
+            )],
+        );
+        let book = budgeted(vec![deep], 2);
+
+        let html = render_html(&book, 5);
+
+        assert!(
+            html.contains("<div class=\"c-omitted d2\">2 replies omitted</div>"),
+            "{html}"
+        );
+        assert_eq!(
+            html.matches("c-omitted").count(),
+            1,
+            "omission restated: {html}"
+        );
+        // Disclosure must not masquerade as navigation.
+        assert!(!html.contains("c-skip"));
+    }
+
+    #[test]
+    fn a_trimmed_thread_declares_its_full_size_at_the_chapter_head() {
+        // Without this the chapter reads as a small thread until it stops.
+        let wide = comment(
+            "root",
+            "<p>root</p>",
+            0,
+            (0..9)
+                .map(|index| comment(&format!("r{index}"), "<p>reply</p>", 1, vec![]))
+                .collect(),
+        );
+        let book = budgeted(vec![wide], 4);
+
+        let html = render_html(&book, 5);
+
+        assert!(
+            html.contains("<div class=\"t-info\">showing 4 of 10 comments</div>"),
+            "{html}"
+        );
+    }
+
+    #[test]
+    fn a_complete_thread_declares_nothing() {
+        let book = budgeted(
+            vec![comment(
+                "a",
+                "<p>a</p>",
+                0,
+                vec![comment("b", "<p>b</p>", 1, vec![])],
+            )],
+            crate::model::MAX_BOOK_COMMENTS,
+        );
+
+        let html = render_html(&book, 5);
+
+        assert!(!html.contains("t-info"));
+        assert!(!html.contains("c-omitted"));
+    }
+
+    #[test]
+    fn a_single_cut_reply_is_singular() {
+        let book = budgeted(
+            vec![comment(
+                "a",
+                "<p>a</p>",
+                0,
+                vec![comment("b", "<p>b</p>", 1, vec![])],
+            )],
+            1,
+        );
+
+        let html = render_html(&book, 5);
+
+        assert!(html.contains("1 reply omitted"), "{html}");
     }
 
     #[test]

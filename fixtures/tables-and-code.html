@@ -1,0 +1,44 @@
+<!-- Technical article shapes: a real data table with header scoping, a code
+     block whose whitespace and angle brackets must survive verbatim, and
+     footnote anchors that get namespaced rather than dropped. -->
+<article>
+  <h2>Benchmark results</h2>
+
+  <table class="wikitable sortable">
+    <caption>PROSE_TABLE_CAPTION Throughput by build</caption>
+    <colgroup><col span="1"><col span="2"></colgroup>
+    <thead>
+      <tr><th scope="col">Build</th><th scope="col">Ops/s</th><th scope="col">Notes</th></tr>
+    </thead>
+    <tbody>
+      <tr><th scope="row">debug</th><td>1,204</td><td rowspan="2">PROSE_TABLE_CELL shared note</td></tr>
+      <tr><th scope="row">release</th><td>48,910</td></tr>
+      <tr><td colspan="3">PROSE_TABLE_SPAN spanning summary row</td></tr>
+    </tbody>
+    <tfoot>
+      <tr><td colspan="3">Measured on one machine.</td></tr>
+    </tfoot>
+  </table>
+
+  <p>See the note below.<sup id="cite_ref-1" class="reference"><a href="#cite_note-1">[1]</a></sup></p>
+
+  <pre><code class="language-rust">fn main() {
+    let xs: Vec&lt;u8&gt; = vec![1, 2, 3];
+    if xs.len() &gt; 2 &amp;&amp; xs[0] &lt; 9 {
+        println!("PROSE_CODE_MARKER {xs:?}");
+    }
+}</code></pre>
+
+  <dl>
+    <dt>Term</dt>
+    <dd>PROSE_DEFINITION Definition list content.</dd>
+  </dl>
+
+  <ol start="3" reversed>
+    <li value="7">PROSE_LIST_ITEM Ordered list with explicit numbering.</li>
+  </ol>
+
+  <ol class="references">
+    <li id="cite_note-1">PROSE_FOOTNOTE The footnote text itself.</li>
+  </ol>
+</article>

@@ -220,6 +220,7 @@ fn build_comment(item: AlgoliaItem, depth: usize) -> Result<Option<Comment>> {
         html,
         depth,
         children,
+        omitted_replies: 0,
     }))
 }
 

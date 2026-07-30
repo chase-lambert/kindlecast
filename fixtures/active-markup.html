@@ -1,0 +1,35 @@
+<!-- Hostile and malformed markup in one fragment. The structural cases matter
+     most: each is something that, parsed in the assembled book rather than in
+     isolation, could restructure chapters it does not own. The unbalanced
+     </div>, the <plaintext>, the unclosed <script>, and the <body class> are
+     all here for that reason. -->
+<div class="entry">
+  <p>PROSE_OPENING Ordinary text before anything hostile.</p>
+
+  <script>window.__tracker = 1; document.write("SHOULD_NOT_APPEAR_SCRIPT");</script>
+  <style>.entry { color: red } /* SHOULD_NOT_APPEAR_STYLE */</style>
+  <template><p>SHOULD_NOT_APPEAR_TEMPLATE</p></template>
+
+  <p onclick="alert('click')" onmouseover="alert('hover')" style="position:fixed;top:0">
+    PROSE_HANDLER_TEXT Text whose element carries handlers.
+  </p>
+
+  <a href="javascript:alert('nav')">PROSE_ACTIVE_LINK_LABEL</a>
+  <a href="data:text/html,<h1>x</h1>">PROSE_DATA_LINK_LABEL</a>
+  <a href="https://example.com/ok" target="_blank" rel="noopener">PROSE_SAFE_LINK</a>
+
+  <svg viewBox="0 0 10 10"><text>SHOULD_NOT_APPEAR_SVG</text></svg>
+
+  <h1 class="t-head" id="t1">SHOULD_NOT_IMPERSONATE_CHROME</h1>
+  <div class="c-skip" id="c1">PROSE_IMPERSONATION_TEXT</div>
+
+  <!-- SHOULD_NOT_APPEAR_COMMENT -->
+
+  <p>PROSE_BEFORE_UNBALANCED</p>
+</div>
+</div>
+</div>
+<body class="untrusted-body-class" onload="alert('body')">
+<p>PROSE_AFTER_BODY_TAG</p>
+<plaintext>
+<p>PROSE_AFTER_PLAINTEXT should be swallowed as text, not parsed.</p>

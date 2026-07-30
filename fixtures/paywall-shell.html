@@ -1,0 +1,33 @@
+<!-- Paywalled page. Two things must hold: the furniture (subscription form,
+     controls, their values) contributes no text, and the real article prose
+     that IS present survives. The husk-length check in sites/article.rs runs
+     after sanitize precisely so form values cannot pad the count. -->
+<article>
+  <!-- FURNITURE_START -->
+  <div class="paywall-overlay" data-state="locked">
+    <h2>Subscribe to continue</h2>
+    <form action="/subscribe" method="post">
+      <label for="plan">Choose a plan</label>
+      <select id="plan" name="plan">
+        <option value="monthly">Monthly, billed at nine dollars every month forever</option>
+        <option value="annual">Annual, billed at ninety dollars once a year forever</option>
+      </select>
+      <input type="email" name="email" placeholder="Enter a very long placeholder email address here">
+      <textarea name="notes">Textarea default values are not reading content either.</textarea>
+      <button type="submit">Subscribe now for full unlimited access to everything</button>
+      <progress value="70" max="100">70 percent</progress>
+      <meter min="0" max="100" value="40">40 percent</meter>
+    </form>
+  </div>
+  <!-- FURNITURE_END -->
+
+  <div class="article-body">
+    <p>PROSE_TEASER The free paragraph readers actually get.</p>
+    <p class="truncated">PROSE_SECOND More visible prose before the wall drops.</p>
+  </div>
+
+  <aside class="related">
+    <h3>Related</h3>
+    <ul><li><a href="/other">PROSE_RELATED_LINK Another story</a></li></ul>
+  </aside>
+</article>

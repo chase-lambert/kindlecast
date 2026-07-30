@@ -233,7 +233,7 @@ fn slug(value: &str) -> String {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::model::{Book, BookBody, Comment, Story};
     use crate::sanitize::{self, Region};
@@ -290,6 +290,7 @@ mod tests {
                     html: sanitize::fragment("<p>MARKER_COMMENT_ONE_abc</p>", Region::CommentBody),
                     depth: 0,
                     children: vec![],
+                    omitted_replies: 0,
                 },
                 Comment {
                     author: "bob".to_string(),
@@ -297,6 +298,7 @@ mod tests {
                     html: sanitize::fragment("<p>MARKER_COMMENT_TWO_def</p>", Region::CommentBody),
                     depth: 0,
                     children: vec![],
+                    omitted_replies: 0,
                 },
             ]),
             source: "hn".to_string(),
@@ -304,7 +306,7 @@ mod tests {
         }
     }
 
-    fn content_entries(epub_path: &Path) -> HashMap<String, String> {
+    pub(crate) fn content_entries(epub_path: &Path) -> HashMap<String, String> {
         let file = fs::File::open(epub_path).expect("open epub");
         let mut archive = zip::ZipArchive::new(file).expect("epub is a zip");
         let mut entries = HashMap::new();
@@ -352,7 +354,8 @@ mod tests {
         let dir = tempdir().unwrap();
         let book = article_with_unsupported_content();
         let remote = "http://127.0.0.1:1/photo.png";
-        // Real optimize path; image fetch fails immediately (connection refused).
+        // Real optimize path; the image fetch fails immediately — since the
+        // address policy landed it is refused at resolve, before any connection.
         // Book HTML must be the optimized document (omission marker), not the raw remote URL.
         let prepared =
             prepare_book_html(&book, 5, book.story.url.as_deref(), dir.path(), &|_| {}).unwrap();
@@ -492,6 +495,7 @@ mod tests {
             html: sanitize::fragment(body, Region::CommentBody),
             depth: 0,
             children: vec![],
+            omitted_replies: 0,
         }
     }
 
@@ -503,6 +507,45 @@ mod tests {
         ]);
         let html = crate::render::render_html(&book, 5);
         verify_structure(&html, &book).unwrap();
+    }
+
+    #[test]
+    fn navigation_survives_threads_the_budget_split() {
+        // The round-1 design forbade splitting subtrees on the belief that it
+        // would strand skip links. It does not: `annotate_comments` recounts the
+        // retained tree, so ids stay contiguous and every target exists. This
+        // test is the standing proof, over real pruned trees with skip links
+        // (subtrees of 5+) rather than a hand-built stump.
+        let wide_branch = |label: &str| {
+            let mut root = plain_comment(&format!("<p>{label}</p>"));
+            root.children = (0..8)
+                .map(|index| {
+                    let mut child = plain_comment(&format!("<p>{label}-{index}</p>"));
+                    child.depth = 1;
+                    child.children = (0..4)
+                        .map(|deep| {
+                            let mut leaf = plain_comment(&format!("<p>{label}-{index}-{deep}</p>"));
+                            leaf.depth = 2;
+                            leaf
+                        })
+                        .collect();
+                    child
+                })
+                .collect();
+            root
+        };
+
+        for budget in [3, 7, 12, 25, 40] {
+            let mut book = thread_book(vec![]);
+            book.body = BookBody::Discussion(crate::model::Discussion::with_budget_for_test(
+                vec![wide_branch("a"), wide_branch("b"), wide_branch("c")],
+                budget,
+            ));
+            let html = crate::render::render_html(&book, 5);
+            verify_structure(&html, &book).unwrap_or_else(|err| {
+                panic!("budget {budget} produced broken navigation: {err:#}")
+            });
+        }
     }
 
     #[test]

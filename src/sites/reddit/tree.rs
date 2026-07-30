@@ -48,6 +48,7 @@ fn build_comments(flat: &[FlatComment], index: &mut usize, depth: usize) -> Vec<
                 html: item.html.clone(),
                 depth,
                 children,
+                omitted_replies: 0,
             });
         }
     }

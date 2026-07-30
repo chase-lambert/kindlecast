@@ -18,6 +18,9 @@ figcaption { font-size: 0.8em; color: #555; font-style: italic; }
 .c-head { font-size: 0.8em; color: #333; margin: 0 0 0.15em 0; }
 .c-info { color: #777; }
 .c-skip { color: #777; font-weight: normal; text-decoration: none; }
+/* Disclosure, not navigation: italic and unlinked so it never reads as a control. */
+.c-omitted { font-size: 0.75em; color: #777; font-style: italic; margin: 0.3em 0; }
+.t-info { font-size: 0.75em; color: #666; font-style: italic; margin: -0.5em 0 0.8em; }
 .c-hd { font-weight: bold; margin: 0.6em 0 0.3em; }
 .c-body p { margin: 0.4em 0; text-indent: 0; }
 pre { font-family: "Courier New", monospace; font-size: 0.75em; white-space: pre-wrap;

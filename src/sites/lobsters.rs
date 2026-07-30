@@ -113,6 +113,7 @@ fn build_comments(raw: &[LobstersComment], index: &mut usize, depth: usize) -> V
                     .unwrap_or_default(),
                 depth,
                 children,
+                omitted_replies: 0,
             });
         } else {
             out.extend(rebase_comments(children, depth));

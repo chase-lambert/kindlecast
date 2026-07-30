@@ -1,0 +1,32 @@
+<!-- Lazy-loading article body, as shipped by most CMS themes: the visible
+     <img> is a placeholder and the real source hides in data-src, srcset, or a
+     <noscript> twin. Unwrapping <noscript> instead of removing it is what lets
+     the real image survive here. -->
+<article>
+  <p>PROSE_LEAD Opening paragraph before any figure.</p>
+
+  <figure>
+    <img src="data:image/gif;base64,R0lGODlhAQABAAAAACw="
+         data-src="/media/diagram-full.png"
+         srcset="/media/diagram-320.png 320w, /media/diagram-1280.png 1280w"
+         sizes="(max-width: 600px) 320px, 1280px"
+         alt="Architecture diagram"
+         width="1280" height="720"
+         loading="lazy"
+         class="lazyload wp-image-4821"
+         onload="window.__lazy(this)">
+    <figcaption>PROSE_CAPTION Figure one, with a caption worth keeping.</figcaption>
+  </figure>
+
+  <noscript>
+    <img src="/media/diagram-full.png" alt="Architecture diagram, no-script fallback">
+  </noscript>
+
+  <picture>
+    <source srcset="/media/photo.avif" type="image/avif">
+    <source srcset="/media/photo.webp" type="image/webp">
+    <img data-lazy-src="/media/photo.jpg" alt="Photo" class="lazy">
+  </picture>
+
+  <p>PROSE_TAIL Closing paragraph after the figures.</p>
+</article>

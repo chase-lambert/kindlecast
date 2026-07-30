@@ -1,0 +1,35 @@
+<!-- Third-party embeds. The shells go, but each one wraps prose the reader
+     should keep: a tweet's text, a video's caption, a callout's paragraph.
+     This is the fixture that would catch REMOVE growing too greedy. -->
+<article>
+  <p>PROSE_BEFORE_EMBED Text introducing the embed.</p>
+
+  <figure class="wp-block-embed is-type-video">
+    <div class="wp-block-embed__wrapper">
+      <iframe width="560" height="315" src="https://www.youtube.com/embed/abc123"
+              title="Video" allowfullscreen></iframe>
+    </div>
+    <figcaption>PROSE_VIDEO_CAPTION What the video shows.</figcaption>
+  </figure>
+
+  <blockquote class="twitter-tweet">
+    <p lang="en" dir="ltr">PROSE_TWEET_BODY The quoted post's actual words.</p>
+    &mdash; Someone (@someone)
+    <a href="https://twitter.com/someone/status/1">January 1, 2026</a>
+  </blockquote>
+
+  <div class="callout" data-module="newsletter">
+    <p>PROSE_CALLOUT A callout paragraph inside a custom wrapper element.</p>
+  </div>
+
+  <custom-embed data-id="9">
+    <p>PROSE_CUSTOM_ELEMENT Unknown elements unwrap, so this survives.</p>
+  </custom-embed>
+
+  <details>
+    <summary>Expand</summary>
+    <p>PROSE_DETAILS Collapsed content is still reading content.</p>
+  </details>
+
+  <p>PROSE_AFTER_EMBED Text after the embeds.</p>
+</article>

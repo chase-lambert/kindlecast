@@ -66,10 +66,11 @@ pub fn optimize_html(
     build_dir: &Path,
     progress: &dyn Fn(&str),
 ) -> Result<OptimizedHtml> {
-    let agent: ureq::Agent = ureq::Agent::config_builder()
-        .timeout_global(Some(FETCH_TIMEOUT))
-        .build()
-        .into();
+    let agent = ureq::Agent::with_parts(
+        image_agent_config(),
+        ureq::unversioned::transport::DefaultConnector::new(),
+        crate::net::PublicOnlyResolver::default(),
+    );
     optimize_html_with_fetch(html, base_url, build_dir, progress, |url, limit| {
         let mut response = agent
             .get(url.as_str())
@@ -86,6 +87,22 @@ pub fn optimize_html(
             .with_context(|| format!("failed to read image {url}"))?;
         Ok(bytes)
     })
+}
+
+/// Config for the one agent that fetches attacker-influenced URLs.
+///
+/// `proxy(None)` is load-bearing, not tidiness. ureq defaults to
+/// `Proxy::try_from_env()`, and when a proxy is configured it deliberately does
+/// not resolve the target locally — the proxy does. That would hand the
+/// unvalidated image host to the proxy while [`crate::net::PublicOnlyResolver`]
+/// vetted only the proxy's own address, so a redirect to a private host would
+/// go straight through. Consequence, accepted: images do not load behind a
+/// corporate proxy. Redirects stay enabled; every hop is resolved and vetted.
+fn image_agent_config() -> ureq::config::Config {
+    ureq::Agent::config_builder()
+        .timeout_global(Some(FETCH_TIMEOUT))
+        .proxy(None)
+        .build()
 }
 
 fn optimize_html_with_fetch<F>(
@@ -524,6 +541,60 @@ mod tests {
 
         assert_eq!(*fetches.borrow(), MAX_REMOTE_FETCHES);
         assert_eq!(result.stats.skipped, 101);
+    }
+
+    #[test]
+    fn image_agent_ignores_a_proxy_configured_in_the_environment() {
+        // Without this, a proxy would resolve the image host itself and the
+        // address policy would never see it — a redirect to a private host
+        // would reach the network.
+        //
+        // The environment is set for a *child* process rather than mutated
+        // here. `set_var` is unsound in a multithreaded program on Unix, and
+        // this binary is one: the resolver test in `net.rs` calls getaddrinfo,
+        // which reads the environment, concurrently with this test.
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "images::tests::proxy_env_probe",
+                "--ignored",
+                "--nocapture",
+            ])
+            .env("HTTP_PROXY", "http://127.0.0.1:8080")
+            .env("HTTPS_PROXY", "http://127.0.0.1:8080")
+            .output()
+            .expect("re-run this test binary");
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success(),
+            "proxy probe failed:\n{stdout}\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        // A filter that matches nothing also exits zero, so success alone would
+        // let this test pass while asserting nothing.
+        assert!(
+            stdout.contains("1 passed"),
+            "proxy probe did not run; filter is stale:\n{stdout}"
+        );
+    }
+
+    /// Runs only as the child of the test above, with proxy variables set in
+    /// its inherited environment.
+    #[test]
+    #[ignore = "driven by image_agent_ignores_a_proxy_configured_in_the_environment"]
+    fn proxy_env_probe() {
+        assert!(
+            image_agent_config().proxy().is_none(),
+            "image agent must not route through an env proxy"
+        );
+        // Guards the premise: ureq really does pick proxies up from the
+        // environment, so `proxy(None)` is doing work rather than restating a
+        // default. If this fails, the SSRF note in `net.rs` needs revisiting.
+        assert!(
+            ureq::Agent::config_builder().build().proxy().is_some(),
+            "ureq no longer reads proxy env"
+        );
     }
 
     #[test]

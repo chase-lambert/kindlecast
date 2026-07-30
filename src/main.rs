@@ -1,11 +1,13 @@
 mod cli;
 mod config;
+mod corpus;
 mod email;
 mod epub;
 mod images;
 mod install;
 mod model;
 mod native_host;
+mod net;
 mod render;
 mod sanitize;
 mod sites;
@@ -236,9 +238,27 @@ fn main() {
 fn fetch_summary(book: &model::Book) -> String {
     match &book.body {
         BookBody::Discussion(discussion) => {
+            // The book itself is the reader's source of truth; this line exists
+            // so the operator is not surprised by a smaller count than the
+            // thread showed.
+            let budget = match (discussion.is_truncated(), discussion.all_threads_included()) {
+                (false, _) => String::new(),
+                (true, true) => format!(
+                    " (of {}; all {} threads)",
+                    discussion.total_comment_count(),
+                    discussion.total_threads()
+                ),
+                (true, false) => format!(
+                    " (of {}; {} of {} threads)",
+                    discussion.total_comment_count(),
+                    discussion.included_threads(),
+                    discussion.total_threads()
+                ),
+            };
             format!(
-                "{} comments; max depth {}",
+                "{} comments{}; max depth {}",
                 discussion.comment_count(),
+                budget,
                 discussion.max_depth()
             )
         }

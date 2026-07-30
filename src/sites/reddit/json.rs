@@ -172,6 +172,11 @@ pub(super) fn build_comment(raw: RedditComment, depth: usize) -> CommentForest {
             html,
             depth,
             children: children.comments,
+            // Reddit's never-fetched `more` placeholders are aggregated at the
+            // forest level and reported via progress; attaching them here needs
+            // positional extraction that this parse does not do. Budget
+            // omissions are the only ones disclosed inline today.
+            omitted_replies: 0,
         }],
     }
 }

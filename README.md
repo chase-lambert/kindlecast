@@ -10,6 +10,9 @@ It supports Hacker News, Reddit, Lobsters, and generic `http(s)` articles.
 - Each top-level comment becomes a chapter, so reader chapter controls move
   between threads.
 - Large reply subtrees get skip links.
+- Very large discussions are trimmed breadth-first, so you get every top-level
+  discussion and the replies under each, rather than a few complete threads and
+  nothing else. Whatever is cut is disclosed in the book.
 - Indentation stops at a configurable depth instead of consuming the page.
 - Remote images are resized and packaged for broad reader compatibility.
 
@@ -102,8 +105,46 @@ become part of a book:
 
 ## Limits
 
+- A book holds at most 1,500 comments. The budget is spent one comment at a
+  time, cycling through threads in the order the site ranked them and taking
+  each thread's replies breadth-first. Every thread gets its opening comment
+  before any thread gets a second — up to 1,500 threads, beyond which the
+  remainder are left out and counted — and threads that run out release their
+  share to the ones that remain, so a lone giant thread beside many small ones
+  still gets everything it needs.
+
+  Nothing is hidden. The line under the title reports the extent
+  (`1500 of 3767 comments · all 433 threads`), each trimmed chapter states its
+  full size (`showing 18 of 436 comments`), and each cut point says what was
+  removed (`12 replies omitted`).
 - Images are bounded to 100 downloads, 20 MiB each, and 100 MiB total. JPEG,
   PNG, GIF, and WebP are supported; omitted images retain their alt text.
 - Requests time out after 30s, under 16 MiB HTML and 32 MiB JSON body budgets.
-- Reddit threads are fetched at up to 500 comments; omitted reply counts are
-  shown inline.
+- Reddit threads are fetched at up to 500 comments. Replies beyond that are
+  never fetched, and their total is reported while building rather than in the
+  book — unlike budget trimming, which is disclosed inline.
+- Hacker News hides comments beneath a flagged or dead parent, and its search
+  API omits those subtrees entirely, so they are absent from the book.
+
+## Image fetching and private addresses
+
+Image URLs come out of untrusted page HTML, so the image fetcher resolves
+through an address policy: anything that is not publicly routable — loopback,
+private ranges, link-local (including `169.254.169.254`), carrier-grade NAT,
+unique-local, link-local and site-local IPv6, documentation and discard ranges,
+6to4, and IPv4-mapped or IPv4-translated forms of any of those — is refused, and
+the image is omitted.
+Because the check runs where the address is chosen rather than on the URL, it
+also covers redirects.
+
+Two consequences worth knowing:
+
+- **Image fetches ignore `HTTP_PROXY`/`HTTPS_PROXY`.** A proxy would resolve the
+  host itself, which would put the target back out of reach of the policy.
+  Behind a corporate proxy, article images are omitted rather than fetched
+  unchecked.
+- This bounds where an image URL can point, not what is hosted there. It is not
+  a general network security boundary: an attacker-controlled public address is
+  still reachable, as it is for any URL you choose to open. Only the well-known
+  NAT64 prefix is recognized — a network running NAT64 from its own address
+  space is indistinguishable from ordinary public space here.
