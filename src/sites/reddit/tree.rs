@@ -1,11 +1,12 @@
 use crate::model::{Comment, rebase_comments};
+use crate::sanitize::SanitizedHtml;
 use chrono::{DateTime, Utc};
 
 #[derive(Clone)]
 pub(super) struct FlatComment {
     pub(super) author: String,
     pub(super) time: DateTime<Utc>,
-    pub(super) html: String,
+    pub(super) html: SanitizedHtml,
     pub(super) depth: usize,
     pub(super) is_deleted_empty: bool,
 }

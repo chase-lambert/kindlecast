@@ -2,6 +2,8 @@ use crate::images::{self, ImageStats};
 use crate::model::{Book, BookBody};
 use crate::render::render_html;
 use anyhow::{Context, Result, bail};
+use dom_query::Document;
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -104,10 +106,83 @@ fn prepare_book_html(
 ) -> Result<PreparedHtml> {
     let rendered = render_html(book, max_indent_depth);
     let optimized = images::optimize_html(&rendered, base_url, build_dir, progress)?;
+    verify_structure(&optimized.html, book)?;
     Ok(PreparedHtml {
         html: optimized.html,
         stats: optimized.stats,
     })
+}
+
+/// Refuse to ship a book whose chapters or skip links are broken.
+///
+/// `sanitize` should make this unreachable — untrusted fragments cannot mint an
+/// `h1`, keep an `id`, or forge the `c-skip` class. It is checked anyway because
+/// the entire reading design rests on it: top-level-comment chapters and subtree
+/// skip links. A silent violation yields a book that looks correct until
+/// navigation misfires, which is exactly the failure a reader cannot diagnose.
+///
+/// Deliberately scoped to anchors RustyPub itself owns (`cN`/`tN`) and its own
+/// skip links. Extracted articles routinely carry duplicate or dangling author
+/// anchors, and refusing to build over the *author's* sloppy markup would be a
+/// false positive, not an invariant.
+fn verify_structure(html: &str, book: &Book) -> Result<()> {
+    let document = Document::from(html);
+
+    let mut anchors: HashMap<String, usize> = HashMap::new();
+    for node in document.select("[id]").nodes() {
+        let Some(id) = node.attr("id") else { continue };
+        let id = id.to_string();
+        if is_rustypub_anchor(&id) {
+            *anchors.entry(id).or_default() += 1;
+        }
+    }
+    if let Some((id, count)) = anchors.iter().find(|&(_, &count)| count > 1) {
+        bail!(
+            "chapter invariant violated: anchor \"{id}\" appears {count} times. \
+             Refusing to build a book with ambiguous navigation"
+        );
+    }
+
+    for node in document.select("a.c-skip").nodes() {
+        let Some(href) = node.attr("href") else {
+            continue;
+        };
+        let Some(target) = href.strip_prefix('#') else {
+            continue;
+        };
+        if !anchors.contains_key(target) {
+            bail!(
+                "chapter invariant violated: skip link points at \"#{target}\", \
+                 which no comment or thread anchor matches. \
+                 Refusing to build a book with broken navigation"
+            );
+        }
+    }
+
+    if let BookBody::Discussion(discussion) = &book.body {
+        let threads = discussion.comments().len();
+        // One story title, plus one chapter heading per top-level thread.
+        let expected = 1 + threads;
+        let actual = document.select("h1").nodes().len();
+        if actual != expected {
+            bail!(
+                "chapter invariant violated: {actual} h1 chapter headings for \
+                 {threads} top-level threads (expected {expected}). \
+                 Refusing to build a corrupted book"
+            );
+        }
+    }
+
+    Ok(())
+}
+
+/// `cN` / `tN` — the comment and thread anchors `render` emits.
+fn is_rustypub_anchor(id: &str) -> bool {
+    let mut chars = id.chars();
+    matches!(chars.next(), Some('c' | 't')) && {
+        let digits = chars.as_str();
+        !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit())
+    }
 }
 
 fn image_base_url<'a>(book: &'a Book, fallback_url: &'a str) -> Option<&'a str> {
@@ -161,6 +236,7 @@ fn slug(value: &str) -> String {
 mod tests {
     use super::*;
     use crate::model::{Book, BookBody, Comment, Story};
+    use crate::sanitize::{self, Region};
     use chrono::{TimeZone, Utc};
     use std::collections::HashMap;
     use std::io::Read;
@@ -178,8 +254,11 @@ mod tests {
                 author: "author".to_string(),
                 points: None,
                 time: Utc.with_ymd_and_hms(2026, 7, 8, 12, 0, 0).unwrap(),
-                text_html: Some(format!(
-                    r#"<p>Hello</p><figure><img src="{remote}" alt="Photo"><figcaption>Caption before <svg><text>vector-only text</text></svg> Caption after</figcaption></figure><p onclick="alert('event')"><a href="javascript:alert('link')" onmouseover="alert('hover')">Readable active-link label</a></p>"#
+                text_html: Some(sanitize::fragment(
+                    &format!(
+                        r#"<p>Hello</p><figure><img src="{remote}" alt="Photo"><figcaption>Caption before <svg><text>vector-only text</text></svg> Caption after</figcaption></figure><p onclick="alert('event')"><a href="javascript:alert('link')" onmouseover="alert('hover')">Readable active-link label</a></p>"#
+                    ),
+                    Region::ArticleBody,
                 )),
             },
             body: BookBody::Article,
@@ -199,20 +278,23 @@ mod tests {
                 author: "submitter".to_string(),
                 points: Some(3),
                 time,
-                text_html: Some("<p>MARKER_STORY_BODY_xyz</p>".to_string()),
+                text_html: Some(sanitize::fragment(
+                    "<p>MARKER_STORY_BODY_xyz</p>",
+                    Region::DiscussionText,
+                )),
             },
             body: BookBody::discussion(vec![
                 Comment {
                     author: "alice".to_string(),
                     time,
-                    html: "<p>MARKER_COMMENT_ONE_abc</p>".to_string(),
+                    html: sanitize::fragment("<p>MARKER_COMMENT_ONE_abc</p>", Region::CommentBody),
                     depth: 0,
                     children: vec![],
                 },
                 Comment {
                     author: "bob".to_string(),
                     time,
-                    html: "<p>MARKER_COMMENT_TWO_def</p>".to_string(),
+                    html: sanitize::fragment("<p>MARKER_COMMENT_TWO_def</p>", Region::CommentBody),
                     depth: 0,
                     children: vec![],
                 },
@@ -382,5 +464,105 @@ mod tests {
             !package.contains("scripted"),
             "passive EPUB was incorrectly marked as scripted: {package}"
         );
+    }
+
+    fn thread_book(comments: Vec<Comment>) -> Book {
+        let time = Utc.with_ymd_and_hms(2026, 7, 8, 12, 0, 0).unwrap();
+        Book {
+            story: Story {
+                id: "1".to_string(),
+                title: "Invariant".to_string(),
+                url: None,
+                discussion_url: None,
+                author: "submitter".to_string(),
+                points: None,
+                time,
+                text_html: None,
+            },
+            body: BookBody::discussion(comments),
+            source: "hn".to_string(),
+            source_slug: "hn".to_string(),
+        }
+    }
+
+    fn plain_comment(body: &str) -> Comment {
+        Comment {
+            author: "alice".to_string(),
+            time: Utc.with_ymd_and_hms(2026, 7, 8, 12, 0, 0).unwrap(),
+            html: sanitize::fragment(body, Region::CommentBody),
+            depth: 0,
+            children: vec![],
+        }
+    }
+
+    #[test]
+    fn real_render_output_satisfies_the_invariant() {
+        let book = thread_book(vec![
+            plain_comment("<p>one</p>"),
+            plain_comment("<p>two</p>"),
+        ]);
+        let html = crate::render::render_html(&book, 5);
+        verify_structure(&html, &book).unwrap();
+    }
+
+    #[test]
+    fn hostile_comment_bodies_still_satisfy_the_invariant() {
+        // The fragments that broke the original assembled-pass design.
+        let book = thread_book(vec![
+            plain_comment(r#"</div><h1 id="t2">forged chapter</h1>"#),
+            plain_comment(r#"<body class="c-body"><plaintext>"#),
+            plain_comment(r##"<a class="c-skip" href="#c99">skip</a>"##),
+        ]);
+        let html = crate::render::render_html(&book, 5);
+        verify_structure(&html, &book).expect("sanitized fragments must not break structure");
+    }
+
+    #[test]
+    fn a_spurious_chapter_heading_fails_the_build() {
+        let book = thread_book(vec![plain_comment("<p>one</p>")]);
+        let html =
+            crate::render::render_html(&book, 5).replace("<p>one</p>", "<h1>smuggled chapter</h1>");
+        let err = verify_structure(&html, &book).unwrap_err();
+        let message = format!("{err:#}");
+        assert!(message.contains("chapter invariant violated"), "{message}");
+        assert!(message.contains("h1 chapter headings"), "{message}");
+    }
+
+    #[test]
+    fn a_duplicate_comment_anchor_fails_the_build() {
+        let book = thread_book(vec![plain_comment("<p>one</p>")]);
+        let html = crate::render::render_html(&book, 5)
+            .replace("<p>one</p>", r#"<span id="c1">collision</span>"#);
+        let err = verify_structure(&html, &book).unwrap_err();
+        let message = format!("{err:#}");
+        assert!(message.contains("ambiguous navigation"), "{message}");
+    }
+
+    #[test]
+    fn a_dangling_skip_link_fails_the_build() {
+        let book = thread_book(vec![plain_comment("<p>one</p>")]);
+        let html = crate::render::render_html(&book, 5).replace(
+            "<p>one</p>",
+            r##"<a class="c-skip" href="#c404">skip 9 replies</a>"##,
+        );
+        let err = verify_structure(&html, &book).unwrap_err();
+        let message = format!("{err:#}");
+        assert!(message.contains("broken navigation"), "{message}");
+    }
+
+    #[test]
+    fn messy_author_anchors_in_an_article_do_not_fail_the_build() {
+        // Articles routinely carry duplicate and dangling anchors of their own.
+        // Refusing to build over the author's markup would be a false positive.
+        let mut book = thread_book(vec![]);
+        book.body = BookBody::Article;
+        book.story.text_html = Some(sanitize::fragment(
+            r##"<p><a href="#fn1">1</a> <a href="#missing">2</a></p>
+                <li id="fn1">note</li><li id="fn1">duplicate note</li>
+                <h1>Part II</h1><h1>Part III</h1>"##,
+            Region::ArticleBody,
+        ));
+        let html = crate::render::render_html(&book, 5);
+        verify_structure(&html, &book).expect("author anchors must not fail the build");
     }
 }

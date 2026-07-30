@@ -1,10 +1,9 @@
 use crate::model::{Book, BookBody, Comment, Story, rebase_comments};
-use crate::sites::{Site, fetch_json};
+use crate::sanitize::{self, Region};
+use crate::sites::{Site, fetch_json, is_lower_alnum, parse_site_url, path_segments};
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use regex::Regex;
 use serde::Deserialize;
-use std::sync::OnceLock;
 
 pub struct Lobsters;
 
@@ -54,12 +53,11 @@ impl Site for Lobsters {
 }
 
 fn parse_id(url: &str) -> Option<String> {
-    static STORY_RE: OnceLock<Regex> = OnceLock::new();
-    STORY_RE
-        .get_or_init(|| Regex::new(r"^https?://lobste\.rs/s/([a-z0-9]+)(?:[/?#].*)?$").unwrap())
-        .captures(url)
-        .and_then(|captures| captures.get(1))
-        .map(|m| m.as_str().to_string())
+    let parsed = parse_site_url(url, &["lobste.rs"], false)?;
+    match path_segments(&parsed).as_slice() {
+        ["s", id, ..] if is_lower_alnum(id) => Some((*id).to_string()),
+        _ => None,
+    }
 }
 
 fn build_thread(story: LobstersStory) -> Result<Book> {
@@ -75,7 +73,10 @@ fn build_thread(story: LobstersStory) -> Result<Book> {
             author: story.submitter_user,
             points: Some(story.score),
             time: story.created_at,
-            text_html: story.description.filter(|html| !html.trim().is_empty()),
+            text_html: story
+                .description
+                .map(|html| sanitize::fragment(&html, Region::DiscussionText))
+                .filter(|html| !html.is_empty()),
         },
         body: BookBody::discussion(comments),
         source: "Lobsters".to_string(),
@@ -105,7 +106,11 @@ fn build_comments(raw: &[LobstersComment], index: &mut usize, depth: usize) -> V
                     .unwrap_or("unknown")
                     .to_string(),
                 time: item.created_at,
-                html: item.comment.clone().unwrap_or_default(),
+                html: item
+                    .comment
+                    .as_deref()
+                    .map(|html| sanitize::fragment(html, Region::CommentBody))
+                    .unwrap_or_default(),
                 depth,
                 children,
             });
@@ -220,5 +225,45 @@ mod tests {
         assert_eq!(discussion.max_depth(), 0);
         assert_eq!(discussion.comments()[0].author, "bob");
         assert_eq!(discussion.comments()[0].depth, 0);
+    }
+
+    #[test]
+    fn parse_id_accepts_story_urls() {
+        assert_eq!(
+            super::parse_id("https://lobste.rs/s/abc123"),
+            Some("abc123".into())
+        );
+        assert_eq!(
+            super::parse_id("http://lobste.rs/s/abc123"),
+            Some("abc123".into())
+        );
+        // A trailing title slug was allowed before and still is.
+        assert_eq!(
+            super::parse_id("https://lobste.rs/s/abc123/some_title"),
+            Some("abc123".into())
+        );
+        assert_eq!(
+            super::parse_id("https://lobste.rs/s/abc123?utm=x"),
+            Some("abc123".into())
+        );
+    }
+
+    #[test]
+    fn parse_id_rejects_other_hosts_and_id_shapes() {
+        for url in [
+            "https://www.lobste.rs/s/abc123",
+            "https://lobste.rs./s/abc123",
+            "https://lobste.rs:8443/s/abc123",
+            "https://user@lobste.rs/s/abc123",
+            "ftp://lobste.rs/s/abc123",
+            "//lobste.rs/s/abc123",
+            "https://lobste.rs/s/ABC123",
+            "https://lobste.rs/s/abc-123",
+            "https://lobste.rs/s/",
+            "https://lobste.rs/t/rust",
+            "https://evil.test/s/abc123",
+        ] {
+            assert_eq!(super::parse_id(url), None, "should reject {url}");
+        }
     }
 }

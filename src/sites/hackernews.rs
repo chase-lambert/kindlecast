@@ -1,12 +1,12 @@
 use crate::model::{Book, BookBody, Comment, Story};
-use crate::sites::{Site, fetch_json};
+use crate::sanitize::{self, Region};
+use crate::sites::{Site, fetch_json, parse_site_url};
 use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Utc};
-use regex::Regex;
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Mutex, OnceLock};
 
 const ORDER_FETCH_WORKERS: usize = 16;
 
@@ -143,16 +143,20 @@ fn reorder_children(item: &mut AlgoliaItem, orders: &HashMap<u64, Vec<u64>>) {
 }
 
 fn parse_id(url: &str) -> Option<u64> {
-    static ITEM_RE: OnceLock<Regex> = OnceLock::new();
-    if url.chars().all(|ch| ch.is_ascii_digit()) {
-        return url.parse().ok();
+    let trimmed = url.trim();
+    if !trimmed.is_empty() && trimmed.bytes().all(|byte| byte.is_ascii_digit()) {
+        return trimmed.parse().ok();
     }
-    let re = ITEM_RE.get_or_init(|| {
-        Regex::new(r"^(?:https?://)?news\.ycombinator\.com/item\?id=(\d+)(?:[&#].*)?$").unwrap()
-    });
-    re.captures(url)
-        .and_then(|captures| captures.get(1))
-        .and_then(|m| m.as_str().parse().ok())
+    let parsed = parse_site_url(trimmed, &["news.ycombinator.com"], true)?;
+    if parsed.path() != "/item" {
+        return None;
+    }
+    // Looking the key up instead of anchoring the query string is the point:
+    // `?utm_source=x&id=123` used to be rejected purely for parameter order.
+    parsed
+        .query_pairs()
+        .find(|(key, _)| key == "id")
+        .and_then(|(_, value)| value.parse().ok())
 }
 
 fn fetch_item(id: u64) -> Result<AlgoliaItem> {
@@ -179,7 +183,10 @@ fn build_thread(item: AlgoliaItem) -> Result<Book> {
             author: item.author.unwrap_or_else(|| "unknown".to_string()),
             points: item.points,
             time: item.created_at.unwrap_or_else(Utc::now),
-            text_html: item.text,
+            text_html: item
+                .text
+                .map(|text| sanitize::fragment(&text, Region::DiscussionText))
+                .filter(|text| !text.is_empty()),
         },
         body: BookBody::discussion(comments),
         source: "Hacker News".to_string(),
@@ -193,7 +200,10 @@ fn is_thread_root(item: &AlgoliaItem) -> bool {
 
 fn build_comment(item: AlgoliaItem, depth: usize) -> Result<Option<Comment>> {
     let author = item.author.unwrap_or_default();
-    let html = item.text.unwrap_or_default();
+    let html = item
+        .text
+        .map(|text| sanitize::fragment(&text, Region::CommentBody))
+        .unwrap_or_default();
     let children_raw = item.children.unwrap_or_default();
     if author.is_empty() && html.is_empty() {
         return Ok(None);
@@ -276,5 +286,56 @@ mod tests {
             .map(|c| c.id)
             .collect();
         assert_eq!(ids, vec![5, 1, 4]);
+    }
+
+    #[test]
+    fn parse_id_accepts_the_shapes_the_regex_did() {
+        // Bare numeric id, and a scheme-less host, both allowed before.
+        assert_eq!(super::parse_id("126809"), Some(126809));
+        assert_eq!(
+            super::parse_id("news.ycombinator.com/item?id=126809"),
+            Some(126809)
+        );
+        assert_eq!(
+            super::parse_id("https://news.ycombinator.com/item?id=126809"),
+            Some(126809)
+        );
+        assert_eq!(
+            super::parse_id("http://news.ycombinator.com/item?id=1#c"),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn parse_id_no_longer_depends_on_query_parameter_order() {
+        // Both were rejected by the anchored pattern purely for ordering/case.
+        assert_eq!(
+            super::parse_id("https://news.ycombinator.com/item?utm_source=x&id=123"),
+            Some(123)
+        );
+        assert_eq!(
+            super::parse_id("https://NEWS.YCOMBINATOR.COM/item?id=123"),
+            Some(123)
+        );
+    }
+
+    #[test]
+    fn parse_id_rejects_authority_and_host_tricks() {
+        for url in [
+            "https://user:pass@news.ycombinator.com/item?id=1",
+            "https://user@news.ycombinator.com/item?id=1",
+            "https://news.ycombinator.com:8443/item?id=1",
+            "https://news.ycombinator.com./item?id=1",
+            "https://not-news.ycombinator.com/item?id=1",
+            "https://news.ycombinator.com.evil.test/item?id=1",
+            "//news.ycombinator.com/item?id=1",
+            "https://news.ycombinator.com/%69tem?id=1",
+            "https://news.ycombinator.com/item?id=abc",
+            "https://news.ycombinator.com/item",
+            "https://news.ycombinator.com/newest?id=1",
+            "ftp://news.ycombinator.com/item?id=1",
+        ] {
+            assert_eq!(super::parse_id(url), None, "should reject {url}");
+        }
     }
 }

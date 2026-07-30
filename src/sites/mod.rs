@@ -4,6 +4,7 @@ use anyhow::{Context, Result};
 use serde::de::DeserializeOwned;
 use std::time::Duration;
 use ureq::ResponseExt;
+use url::{ParseError, Url};
 
 pub mod article;
 pub mod hackernews;
@@ -38,6 +39,67 @@ pub fn adapter_for(url: &str) -> Option<&'static dyn Site> {
 
 pub fn is_http_url(url: &str) -> bool {
     url.starts_with("http://") || url.starts_with("https://")
+}
+
+/// Shared URL grammar for the site matchers, replacing per-site anchored
+/// regexes.
+///
+/// Kept exactly as strict as those regexes were, because loosening a matcher
+/// silently changes which adapter claims a URL: `http`/`https` only, no
+/// userinfo, no explicit port, and **exact** host membership. Suffix matching
+/// would be the tempting shortcut and the wrong one — it admits
+/// `not-news.ycombinator.com` and `np.reddit.com`. A trailing-dot host
+/// (`lobste.rs.`) fails the exact match and is rejected, as before.
+///
+/// `allow_bare_host` exists only for Hacker News, whose previous pattern made
+/// the scheme optional (`(?:https?://)?`).
+pub fn parse_site_url(input: &str, hosts: &[&str], allow_bare_host: bool) -> Option<Url> {
+    let trimmed = input.trim();
+    // A protocol-relative URL has no scheme to validate; it was rejected before.
+    if trimmed.starts_with("//") {
+        return None;
+    }
+    let parsed = match Url::parse(trimmed) {
+        Ok(url) => url,
+        Err(ParseError::RelativeUrlWithoutBase) if allow_bare_host => {
+            Url::parse(&format!("https://{trimmed}")).ok()?
+        }
+        Err(_) => return None,
+    };
+    if !matches!(parsed.scheme(), "http" | "https")
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || parsed.port().is_some()
+    {
+        return None;
+    }
+    let host = parsed.host_str()?;
+    hosts
+        .iter()
+        .any(|allowed| host.eq_ignore_ascii_case(allowed))
+        .then_some(parsed)
+}
+
+/// Non-empty path segments, left percent-encoded on purpose so an id charset
+/// check cannot be fooled: `redd.it/%61bc123` must not yield the post id
+/// `abc123`.
+pub fn path_segments(url: &Url) -> Vec<&str> {
+    url.path_segments()
+        .map(|segments| segments.filter(|segment| !segment.is_empty()).collect())
+        .unwrap_or_default()
+}
+
+/// Reddit and Lobsters ids.
+pub fn is_lower_alnum(value: &str) -> bool {
+    !value.is_empty()
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+}
+
+/// Reddit share tokens, which are mixed case.
+pub fn is_alnum(value: &str) -> bool {
+    !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_alphanumeric())
 }
 
 /// Agent with the shared timeout preset. Prefer one agent per worker when

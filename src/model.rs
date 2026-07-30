@@ -1,3 +1,4 @@
+use crate::sanitize::SanitizedHtml;
 use chrono::{DateTime, Utc};
 
 #[derive(Debug, Clone)]
@@ -63,14 +64,17 @@ pub struct Story {
     pub author: String,
     pub points: Option<i64>,
     pub time: DateTime<Utc>,
-    pub text_html: Option<String>,
+    /// Selftext or extracted article body. Sanitized at extraction.
+    pub text_html: Option<SanitizedHtml>,
 }
 
 #[derive(Debug, Clone)]
 pub struct Comment {
     pub author: String,
     pub time: DateTime<Utc>,
-    pub html: String,
+    /// Comment body. Sanitized at extraction, so `render` can assemble it
+    /// without any risk of it restructuring the surrounding book.
+    pub html: SanitizedHtml,
     pub depth: usize,
     pub children: Vec<Comment>,
 }

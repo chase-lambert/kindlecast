@@ -1,9 +1,7 @@
 use super::tree::{FlatComment, build_comment_tree};
-use super::{
-    clean_body_html, desc_by_name, find_own_comment_slot, first_node, parse_more_count,
-    parse_timestamp,
-};
+use super::{desc_by_name, find_own_comment_slot, first_node, parse_more_count, parse_timestamp};
 use crate::model::{Book, BookBody, Story};
+use crate::sanitize::{self, Region};
 use anyhow::{Context, Result, bail};
 use chrono::Utc;
 use dom_query::Document;
@@ -67,8 +65,8 @@ pub(super) fn extract_current_desktop(doc: &Document, input_url: &str) -> Result
     let selftext_html = post
         .descendants_it()
         .find(|d| d.attr("slot").as_deref() == Some("text-body"))
-        .map(|el| clean_body_html(el.inner_html().as_ref()))
-        .filter(|s| !s.trim().is_empty());
+        .map(|el| sanitize::fragment(el.inner_html().as_ref(), Region::DiscussionText))
+        .filter(|html| !html.is_empty());
 
     let discussion_url = if !permalink.is_empty() {
         if permalink.starts_with("https://") || permalink.starts_with("http://") {
@@ -114,7 +112,7 @@ pub(super) fn extract_current_desktop(doc: &Document, input_url: &str) -> Result
             .to_string();
 
         let body_html = find_own_comment_slot(comment_el)
-            .map(|el| clean_body_html(el.inner_html().as_ref()))
+            .map(|el| sanitize::fragment(el.inner_html().as_ref(), Region::CommentBody))
             .unwrap_or_default();
 
         let time = comment_el
@@ -123,7 +121,7 @@ pub(super) fn extract_current_desktop(doc: &Document, input_url: &str) -> Result
             .and_then(parse_timestamp)
             .unwrap_or_else(Utc::now);
 
-        let is_deleted_empty = author == "[deleted]" && body_html.trim().is_empty();
+        let is_deleted_empty = author == "[deleted]" && body_html.is_empty();
 
         flat_comments.push(FlatComment {
             author,

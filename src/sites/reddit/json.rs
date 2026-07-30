@@ -1,5 +1,6 @@
 use super::{parse_post_id, resolve_share_url};
 use crate::model::{Book, BookBody, Comment, Story, comment_stats, rebase_comments};
+use crate::sanitize::{self, Region, SanitizedHtml};
 use crate::sites::fetch_json;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
@@ -107,7 +108,9 @@ pub(super) fn build_thread(listings: Vec<Listing>) -> Result<(Book, usize)> {
                 author: post.author,
                 points: post.score,
                 time: utc_from_timestamp(post.created_utc),
-                text_html: post.selftext_html.and_then(non_empty_html),
+                text_html: post
+                    .selftext_html
+                    .and_then(|html| sanitized_html(html, Region::DiscussionText)),
             },
             body: BookBody::discussion(forest.comments),
             source: format!("r/{}", post.subreddit),
@@ -140,7 +143,10 @@ fn build_thing(thing: Thing, depth: usize) -> CommentForest {
 
 pub(super) fn build_comment(raw: RedditComment, depth: usize) -> CommentForest {
     let author = raw.author.unwrap_or_default();
-    let html = raw.body_html.and_then(non_empty_html).unwrap_or_default();
+    let html = raw
+        .body_html
+        .and_then(|html| sanitized_html(html, Region::CommentBody))
+        .unwrap_or_default();
     let children = match raw.replies {
         Some(Replies::Listing(listing)) => build_comment_forest(listing.data.children, depth + 1),
         Some(Replies::Empty(value)) => {
@@ -149,7 +155,7 @@ pub(super) fn build_comment(raw: RedditComment, depth: usize) -> CommentForest {
         }
         _ => empty_forest(),
     };
-    if author == "[deleted]" && html.trim().is_empty() {
+    if author == "[deleted]" && html.is_empty() {
         return rebase_forest(children, depth);
     }
 
@@ -207,8 +213,8 @@ fn rebase_forest(forest: CommentForest, root_depth: usize) -> CommentForest {
     }
 }
 
-fn non_empty_html(value: String) -> Option<String> {
-    let html = value.trim().to_string();
+fn sanitized_html(value: String, region: Region) -> Option<SanitizedHtml> {
+    let html = sanitize::fragment(&value, region);
     (!html.is_empty()).then_some(html)
 }
 

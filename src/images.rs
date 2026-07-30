@@ -98,15 +98,11 @@ fn optimize_html_with_fetch<F>(
 where
     F: FnMut(&Url, u64) -> Result<Vec<u8>>,
 {
+    // Precondition: `html` is `render` output — trusted chrome wrapping
+    // fragments that already passed `sanitize::fragment`. Element and attribute
+    // policy (inline SVG, `on*` handlers, active-scheme URLs, `srcset`,
+    // `<source>`) is therefore already applied; this pass owns images only.
     let document = Document::from(html);
-    // Pandoc externalizes surviving inline SVG as `.svgz` EPUB assets. Besides
-    // being outside RustyPub's JPEG/PNG compatibility policy, malformed
-    // source SVG can then make the entire EPUB invalid. Remove it before the
-    // empty-image fast path so icon-only documents cannot bypass this boundary.
-    document.select("svg").remove();
-    remove_active_content(&document);
-    document.select("picture source").remove();
-    document.select("img").remove_attr("srcset");
 
     let image_nodes = document.select("img").nodes().to_vec();
     let mut stats = ImageStats {
@@ -217,29 +213,6 @@ where
         html: document.html().to_string(),
         stats,
     })
-}
-
-fn remove_active_content(document: &Document) {
-    for node in document.select("*").nodes() {
-        let event_handlers = node
-            .attrs()
-            .into_iter()
-            .map(|attribute| attribute.name.local.to_string())
-            .filter(|name| name.starts_with("on"))
-            .collect::<Vec<_>>();
-        for name in event_handlers {
-            node.remove_attr(&name);
-        }
-    }
-
-    for node in document.select("[href]").nodes() {
-        if node.attr("href").is_some_and(|href| {
-            Url::parse(href.trim())
-                .is_ok_and(|url| matches!(url.scheme(), "javascript" | "vbscript" | "data"))
-        }) {
-            node.remove_attr("href");
-        }
-    }
 }
 
 struct EncodedImage {
@@ -434,9 +407,10 @@ mod tests {
     fn rewrites_lazy_images_and_closes_remote_sources() {
         let dir = tempdir().unwrap();
         let fetched_urls = RefCell::new(Vec::new());
-        let html = r#"<!doctype html><html><body>
-            <h1 class="t-head">Chapter</h1>
-            <picture>
+        // Exercise the real pipeline seam: an untrusted article body goes
+        // through `sanitize::fragment`, then `render`-style chrome wraps it,
+        // then images are localized.
+        let untrusted = r#"<picture>
               <source srcset="https://cdn.example/huge.png 2x">
               <img src="data:image/gif;base64,placeholder"
                    data-src="/photo.png"
@@ -447,11 +421,15 @@ mod tests {
               Caption before
               <svg><text>vector-only text</text></svg>
               Caption after
-            </figcaption>
-        </body></html>"#;
+            </figcaption>"#;
+        let body = crate::sanitize::fragment(untrusted, crate::sanitize::Region::ArticleBody);
+        let html = format!(
+            "<!doctype html><html><body>\n<h1 class=\"t-head\">Chapter</h1>\n<div class=\"story-text\">{}</div>\n</body></html>",
+            body.as_str()
+        );
 
         let result = optimize_html_with_fetch(
-            html,
+            &html,
             Some("https://example.com/posts/one"),
             dir.path(),
             &|_| {},
@@ -475,58 +453,6 @@ mod tests {
         assert!(result.html.contains("Caption before"));
         assert!(result.html.contains("Caption after"));
         assert!(result.html.contains(r#"<h1 class="t-head">Chapter</h1>"#));
-    }
-
-    #[test]
-    fn removes_inline_svg_before_empty_image_fast_path() {
-        let dir = tempdir().unwrap();
-        let result = optimize_html_with_fetch(
-            r#"<html><body><p>Before</p><svg><text>vector-only text</text></svg><p>After</p></body></html>"#,
-            None,
-            dir.path(),
-            &|_| {},
-            |_, _| panic!("SVG-only HTML must not trigger an image fetch"),
-        )
-        .unwrap();
-
-        assert_eq!(result.stats.references, 0);
-        assert!(!result.html.contains("<svg"));
-        assert!(!result.html.contains("vector-only text"));
-        assert!(result.html.contains("<p>Before</p>"));
-        assert!(result.html.contains("<p>After</p>"));
-    }
-
-    #[test]
-    fn removes_active_behavior_but_keeps_visible_link_text() {
-        let dir = tempdir().unwrap();
-        let result = optimize_html_with_fetch(
-            r##"<html><body onload="alert('load')"><p ONCLICK="alert('event')">Before</p><a href="JaVaScRiPt:alert('link')" onmouseover="alert('hover')">Readable label</a><a href="data:text/html,active">Data link</a><a href="#chapter">Chapter link</a><a href="https://example.com/read">Web link</a><p>After</p></body></html>"##,
-            None,
-            dir.path(),
-            &|_| {},
-            |_, _| panic!("active-content-only HTML must not trigger an image fetch"),
-        )
-        .unwrap();
-
-        assert!(!result.html.contains("onload"));
-        assert!(!result.html.contains("onclick"));
-        assert!(!result.html.contains("onmouseover"));
-        assert!(!result.html.to_ascii_lowercase().contains("javascript:"));
-        assert!(!result.html.contains("data:text/html"));
-        assert!(result.html.contains("<a>Readable label</a>"));
-        assert!(result.html.contains("<a>Data link</a>"));
-        assert!(
-            result
-                .html
-                .contains(r##"<a href="#chapter">Chapter link</a>"##)
-        );
-        assert!(
-            result
-                .html
-                .contains(r#"<a href="https://example.com/read">Web link</a>"#)
-        );
-        assert!(result.html.contains("<p>Before</p>"));
-        assert!(result.html.contains("<p>After</p>"));
     }
 
     #[test]

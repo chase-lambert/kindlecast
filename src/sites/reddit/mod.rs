@@ -1,10 +1,8 @@
 use crate::model::Book;
-use crate::sites::{Site, USER_AGENT};
+use crate::sites::{Site, USER_AGENT, is_alnum, is_lower_alnum, parse_site_url, path_segments};
 use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Utc};
 use dom_query::Document;
-use regex::Regex;
-use std::sync::OnceLock;
 
 mod current;
 mod json;
@@ -203,20 +201,6 @@ pub(super) fn find_own_comment_slot<'a>(
 // Old Reddit extraction
 // ---------------------------------------------------------------------------
 
-pub(super) fn clean_body_html(html: &str) -> String {
-    static CLEAN_RE: OnceLock<Regex> = OnceLock::new();
-    CLEAN_RE
-        .get_or_init(|| {
-            Regex::new(
-                r"(?is)<script\b[^>]*>.*?</script\s*>|<style\b[^>]*>.*?</style\s*>|<template\b[^>]*>.*?</template\s*>",
-            )
-            .unwrap()
-        })
-        .replace_all(html, "")
-        .trim()
-        .to_string()
-}
-
 pub(super) fn parse_timestamp(value: &str) -> Option<DateTime<Utc>> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
@@ -235,52 +219,59 @@ pub(super) fn parse_timestamp(value: &str) -> Option<DateTime<Utc>> {
     None
 }
 
+/// First run of digits in a "N more replies" label.
 pub(super) fn parse_more_count(text: &str) -> Option<usize> {
-    static MORE_RE: OnceLock<Regex> = OnceLock::new();
-    MORE_RE
-        .get_or_init(|| Regex::new(r"(\d+)\s*(?:more\s*)?(?:repl(?:y|ies))?").unwrap())
-        .captures(text)
-        .and_then(|caps| caps.get(1))
-        .and_then(|m| m.as_str().parse::<usize>().ok())
+    let digits: String = text
+        .chars()
+        .skip_while(|ch| !ch.is_ascii_digit())
+        .take_while(char::is_ascii_digit)
+        .collect();
+    digits.parse().ok()
 }
 
 // ---------------------------------------------------------------------------
 // Existing JSON path
 // ---------------------------------------------------------------------------
 
+/// Discussion hosts. Exact membership only: `ends_with("reddit.com")` would
+/// quietly admit `np.reddit.com`, which the previous pattern rejected.
+const DISCUSSION_HOSTS: &[&str] = &[
+    "reddit.com",
+    "www.reddit.com",
+    "old.reddit.com",
+    "new.reddit.com",
+];
+const SHORT_HOST: &[&str] = &["redd.it"];
+
 pub(super) fn parse_post_id(url: &str) -> Option<String> {
-    static COMMENTS_RE: OnceLock<Regex> = OnceLock::new();
-    static SHORT_RE: OnceLock<Regex> = OnceLock::new();
-    COMMENTS_RE
-        .get_or_init(|| {
-            Regex::new(
-                r"^https?://(?:www\.|old\.|new\.)?reddit\.com/(?:r/[^/]+/)?comments/([a-z0-9]+)(?:[/?#].*)?$",
-            )
-            .unwrap()
-        })
-        .captures(url)
-        .and_then(|captures| captures.get(1))
-        .or_else(|| {
-            SHORT_RE
-                .get_or_init(|| {
-                    Regex::new(r"^https?://redd\.it/([a-z0-9]+)(?:[/?#].*)?$").unwrap()
-                })
-                .captures(url)
-                .and_then(|captures| captures.get(1))
-        })
-        .map(|m| m.as_str().to_string())
+    if let Some(parsed) = parse_site_url(url, SHORT_HOST, false)
+        && let [id, ..] = path_segments(&parsed).as_slice()
+        && is_lower_alnum(id)
+    {
+        return Some((*id).to_string());
+    }
+
+    let parsed = parse_site_url(url, DISCUSSION_HOSTS, false)?;
+    let segments = path_segments(&parsed);
+    // Either `/comments/<id>` or `/r/<sub>/comments/<id>` — nothing else may
+    // precede `comments`, so an arbitrarily deep path cannot smuggle one in.
+    let index = segments.iter().position(|segment| *segment == "comments")?;
+    if index != 0 && !(index == 2 && segments[0] == "r") {
+        return None;
+    }
+    let id = segments.get(index + 1)?;
+    is_lower_alnum(id).then(|| (*id).to_string())
 }
 
 pub(super) fn is_share_url(url: &str) -> bool {
-    static SHARE_RE: OnceLock<Regex> = OnceLock::new();
-    SHARE_RE
-        .get_or_init(|| {
-            Regex::new(
-                r"^https?://(?:www\.|old\.|new\.)?reddit\.com/r/[^/]+/s/[A-Za-z0-9]+(?:[/?#].*)?$",
-            )
-            .unwrap()
-        })
-        .is_match(url)
+    let Some(parsed) = parse_site_url(url, DISCUSSION_HOSTS, false) else {
+        return false;
+    };
+    // Share tokens are mixed case, unlike post ids.
+    matches!(
+        path_segments(&parsed).as_slice(),
+        ["r", _subreddit, "s", token, ..] if is_alnum(token)
+    )
 }
 
 pub(super) fn resolve_share_url(url: &str) -> Result<String> {
@@ -308,6 +299,7 @@ mod tests {
     use super::tree::{FlatComment, build_comment_tree};
     use super::*;
     use crate::model::{BookBody, comment_stats};
+    use crate::sanitize::{self, Region};
 
     fn discussion(book: &Book) -> &crate::model::Discussion {
         match &book.body {
@@ -360,8 +352,15 @@ mod tests {
         assert_eq!(d.comment_count(), 2);
         assert_eq!(d.max_depth(), 1);
         assert_eq!(d.comments()[0].children[0].author, "carol");
-        assert!(book.story.text_html.as_ref().unwrap().contains("<div"));
-        assert!(d.comments()[0].html.contains("&lt;"));
+        assert!(
+            book.story
+                .text_html
+                .as_ref()
+                .unwrap()
+                .as_str()
+                .contains("<div")
+        );
+        assert!(d.comments()[0].html.as_str().contains("&lt;"));
         assert_eq!(omitted, 4);
     }
 
@@ -424,7 +423,14 @@ mod tests {
                 .unwrap()
                 .contains("xyz789")
         );
-        assert!(book.story.text_html.as_ref().unwrap().contains("selftext"));
+        assert!(
+            book.story
+                .text_html
+                .as_ref()
+                .unwrap()
+                .as_str()
+                .contains("selftext")
+        );
         assert_eq!(omitted, 5);
     }
 
@@ -456,7 +462,7 @@ mod tests {
         let promoted = &d.comments()[1];
         assert_eq!(promoted.author, "replier");
         assert_eq!(promoted.depth, 0);
-        assert!(promoted.html.contains("Reply to deleted"));
+        assert!(promoted.html.as_str().contains("Reply to deleted"));
     }
 
     #[test]
@@ -470,10 +476,10 @@ mod tests {
         let d = discussion(&book);
 
         let top = &d.comments()[0];
-        assert_eq!(top.html.trim(), "<p>Top-level reply</p>");
-        assert!(!top.html.contains("Nested reply"));
-        assert!(!top.html.contains("thing"));
-        assert!(!top.html.contains("child"));
+        assert_eq!(top.html.as_str().trim(), "<p>Top-level reply</p>");
+        assert!(!top.html.as_str().contains("Nested reply"));
+        assert!(!top.html.as_str().contains("thing"));
+        assert!(!top.html.as_str().contains("child"));
     }
 
     #[test]
@@ -523,6 +529,7 @@ mod tests {
                 .text_html
                 .as_ref()
                 .unwrap()
+                .as_str()
                 .contains("Self-post body")
         );
         assert!(
@@ -558,7 +565,7 @@ mod tests {
         let promoted = &d.comments()[1];
         assert_eq!(promoted.author, "replier");
         assert_eq!(promoted.depth, 0);
-        assert!(promoted.html.contains("Reply to deleted"));
+        assert!(promoted.html.as_str().contains("Reply to deleted"));
     }
 
     #[test]
@@ -572,8 +579,8 @@ mod tests {
         let d = discussion(&book);
 
         let top = &d.comments()[0];
-        assert_eq!(top.html.trim(), "<p>Top-level reply</p>");
-        assert!(!top.html.contains("Nested reply"));
+        assert_eq!(top.html.as_str().trim(), "<p>Top-level reply</p>");
+        assert!(!top.html.as_str().contains("Nested reply"));
     }
 
     #[test]
@@ -661,15 +668,6 @@ mod tests {
     }
 
     #[test]
-    fn clean_body_strips_script_and_style() {
-        let html = "<p>Hello</p><script>bad()</script><style>.x{}</style><p>World</p>";
-        let cleaned = clean_body_html(html);
-        assert_eq!(cleaned, "<p>Hello</p><p>World</p>");
-        assert!(!cleaned.contains("script"));
-        assert!(!cleaned.contains("style"));
-    }
-
-    #[test]
     fn old_reddit_with_more_numbox_counts_omitted() {
         let html = r#"<html><body>
 <div class="thing id-t3_om001 link" data-fullname="t3_om001" data-permalink="/r/test/comments/om001/post/">
@@ -706,21 +704,21 @@ mod tests {
             FlatComment {
                 author: "a".into(),
                 time: now,
-                html: "<p>A</p>".into(),
+                html: sanitize::fragment("<p>A</p>", Region::CommentBody),
                 depth: 0,
                 is_deleted_empty: false,
             },
             FlatComment {
                 author: "b".into(),
                 time: now,
-                html: "<p>B</p>".into(),
+                html: sanitize::fragment("<p>B</p>", Region::CommentBody),
                 depth: 2,
                 is_deleted_empty: false,
             },
             FlatComment {
                 author: "c".into(),
                 time: now,
-                html: "<p>C</p>".into(),
+                html: sanitize::fragment("<p>C</p>", Region::CommentBody),
                 depth: 0,
                 is_deleted_empty: false,
             },
@@ -787,6 +785,7 @@ mod tests {
                 .text_html
                 .as_ref()
                 .unwrap()
+                .as_str()
                 .contains("Self-post text")
         );
     }
@@ -823,12 +822,12 @@ mod tests {
         // parent comment should contain only its own body, not child's
         let parent = &d.comments()[0];
         assert_eq!(parent.author, "parent");
-        assert_eq!(parent.html.trim(), "<p>Parent body</p>");
-        assert!(!parent.html.contains("Child body"));
+        assert_eq!(parent.html.as_str().trim(), "<p>Parent body</p>");
+        assert!(!parent.html.as_str().contains("Child body"));
         // child should be nested under parent
         assert_eq!(parent.children.len(), 1);
         assert_eq!(parent.children[0].author, "child");
-        assert_eq!(parent.children[0].html.trim(), "<p>Child body</p>");
+        assert_eq!(parent.children[0].html.as_str().trim(), "<p>Child body</p>");
     }
 
     #[test]
@@ -859,14 +858,15 @@ mod tests {
         // Parent should have empty body (no own slot), child promoted to top
         // Parent is treated as deleted-empty since it has no entry and has children
         let parent = &d.comments()[0];
-        assert!(parent.html.trim().is_empty() || parent.author == "[deleted]");
-        assert!(!parent.html.contains("Child body inside wrapper"));
+        assert!(parent.html.as_str().trim().is_empty() || parent.author == "[deleted]");
+        assert!(!parent.html.as_str().contains("Child body inside wrapper"));
         // Child should appear at depth 0 (promoted from parent)
         assert_eq!(parent.children.len(), 1);
         assert_eq!(parent.children[0].author, "child");
         assert!(
             parent.children[0]
                 .html
+                .as_str()
                 .contains("Child body inside wrapper")
         );
     }
@@ -975,7 +975,80 @@ mod tests {
         assert_eq!(d.comments().len(), 1);
         assert_eq!(d.comments()[0].author, "childauthor");
         assert_eq!(d.comments()[0].depth, 0);
-        assert!(d.comments()[0].html.contains("Child comment body"));
+        assert!(d.comments()[0].html.as_str().contains("Child comment body"));
         // Child's body should not be duplicated into the removed wrapper
+    }
+
+    #[test]
+    fn parse_post_id_requires_exact_hosts_not_suffixes() {
+        // `np.` was rejected by the old pattern; a suffix match would admit it.
+        for url in [
+            "https://np.reddit.com/r/rust/comments/abc123/",
+            "https://reddit.com.evil.test/r/rust/comments/abc123/",
+            "https://notreddit.com/r/rust/comments/abc123/",
+            "https://www.reddit.com./r/rust/comments/abc123/",
+        ] {
+            assert_eq!(super::parse_post_id(url), None, "should reject {url}");
+        }
+        // Apex and the three known subdomains stay accepted.
+        for host in [
+            "reddit.com",
+            "www.reddit.com",
+            "old.reddit.com",
+            "new.reddit.com",
+        ] {
+            assert_eq!(
+                super::parse_post_id(&format!("https://{host}/r/rust/comments/abc123/")).as_deref(),
+                Some("abc123"),
+                "should accept {host}"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_post_id_rejects_authority_and_encoding_tricks() {
+        for url in [
+            "https://user:pass@www.reddit.com/r/rust/comments/abc123/",
+            "https://www.reddit.com:8443/r/rust/comments/abc123/",
+            "ftp://www.reddit.com/r/rust/comments/abc123/",
+            "//www.reddit.com/r/rust/comments/abc123/",
+            // Percent-encoding must not decode into a valid id.
+            "https://redd.it/%61bc123",
+            // Uppercase ids were rejected by `[a-z0-9]+`.
+            "https://www.reddit.com/r/rust/comments/ABC123/",
+            // `comments` may only follow the apex or `/r/<sub>/`.
+            "https://www.reddit.com/user/x/r/rust/comments/abc123/",
+            "https://www.reddit.com/a/b/comments/abc123/",
+        ] {
+            assert_eq!(super::parse_post_id(url), None, "should reject {url}");
+        }
+    }
+
+    #[test]
+    fn share_urls_keep_their_mixed_case_token_grammar() {
+        assert!(super::is_share_url(
+            "https://www.reddit.com/r/rust/s/AbCd123"
+        ));
+        assert!(super::is_share_url(
+            "https://reddit.com/r/rust/s/AbCd123?x=1"
+        ));
+        for url in [
+            "https://np.reddit.com/r/rust/s/AbCd123",
+            "https://www.reddit.com/r/rust/s/",
+            "https://www.reddit.com/r/rust/s/ab-cd",
+            "https://user@www.reddit.com/r/rust/s/AbCd123",
+            "https://www.reddit.com:8443/r/rust/s/AbCd123",
+        ] {
+            assert!(!super::is_share_url(url), "should reject {url}");
+        }
+    }
+
+    #[test]
+    fn more_count_reads_the_first_digit_run() {
+        assert_eq!(super::parse_more_count("5 more replies"), Some(5));
+        assert_eq!(super::parse_more_count("load more comments (42)"), Some(42));
+        assert_eq!(super::parse_more_count("page 2 \u{b7} 5 replies"), Some(2));
+        assert_eq!(super::parse_more_count("more replies"), None);
+        assert_eq!(super::parse_more_count(""), None);
     }
 }

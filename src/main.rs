@@ -7,6 +7,7 @@ mod install;
 mod model;
 mod native_host;
 mod render;
+mod sanitize;
 mod sites;
 mod util;
 
@@ -244,8 +245,8 @@ fn fetch_summary(book: &model::Book) -> String {
         BookBody::Article => book
             .story
             .text_html
-            .as_deref()
-            .map(|html| format!("extracted article ({} chars)", html.len()))
+            .as_ref()
+            .map(|html| format!("extracted article ({} chars)", html.as_str().len()))
             .unwrap_or_else(|| "extracted article".to_string()),
     }
 }

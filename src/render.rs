@@ -1,9 +1,7 @@
 use crate::model::{Book, BookBody, Comment};
 use crate::sites::domain_label;
 use chrono::{DateTime, Utc};
-use regex::Regex;
 use std::fmt::Write;
-use std::sync::OnceLock;
 
 const SNIPPET_MAX_CHARS: usize = 48;
 const SKIP_LINK_MIN_DESCENDANTS: usize = 5;
@@ -103,15 +101,13 @@ fn render_story(out: &mut String, book: &Book) {
         .unwrap();
     }
     writeln!(out, "</div>").unwrap();
+    // Heading policy was applied at extraction, where the region was known:
+    // discussion selftext demoted `h1`, article bodies kept the author's
+    // structure. `render` only places the result.
     if let Some(html) = &book.story.text_html
-        && !html.trim().is_empty()
+        && !html.is_empty()
     {
-        let html = if matches!(book.body, BookBody::Discussion(_)) {
-            demote_h1(html)
-        } else {
-            html.to_string()
-        };
-        writeln!(out, "<div class=\"story-text\">{html}</div>").unwrap();
+        writeln!(out, "<div class=\"story-text\">{}</div>", html.as_str()).unwrap();
     }
 }
 
@@ -191,12 +187,7 @@ fn render_comment(
         )
         .unwrap();
     }
-    writeln!(
-        out,
-        "<div class=\"c-body\">{}</div>",
-        neutralize_headings(&comment.html)
-    )
-    .unwrap();
+    writeln!(out, "<div class=\"c-body\">{}</div>", comment.html.as_str()).unwrap();
     out.push_str("</div>\n");
     for child in &node.children {
         render_comment(
@@ -213,7 +204,7 @@ fn render_comment(
 
 fn thread_heading(comment: &Comment) -> String {
     let author = non_empty(&comment.author).unwrap_or("unknown");
-    let snippet = snippet(&comment.html, SNIPPET_MAX_CHARS);
+    let snippet = snippet(comment.html.as_str(), SNIPPET_MAX_CHARS);
     if snippet.is_empty() {
         escape_html(author)
     } else {
@@ -276,30 +267,6 @@ fn snippet(html: &str, max_chars: usize) -> String {
     truncated
 }
 
-fn neutralize_headings(html: &str) -> String {
-    static OPEN_RE: OnceLock<Regex> = OnceLock::new();
-    static CLOSE_RE: OnceLock<Regex> = OnceLock::new();
-    let html = OPEN_RE
-        .get_or_init(|| Regex::new("(?is)<h[1-6]\\b[^>]*>").unwrap())
-        .replace_all(html, "<div class=\"c-hd\">");
-    CLOSE_RE
-        .get_or_init(|| Regex::new("(?is)</h[1-6]\\s*>").unwrap())
-        .replace_all(&html, "</div>")
-        .to_string()
-}
-
-fn demote_h1(html: &str) -> String {
-    static OPEN_RE: OnceLock<Regex> = OnceLock::new();
-    static CLOSE_RE: OnceLock<Regex> = OnceLock::new();
-    let html = OPEN_RE
-        .get_or_init(|| Regex::new("(?is)<h1(\\s[^>]*)?>").unwrap())
-        .replace_all(html, "<h2$1>");
-    CLOSE_RE
-        .get_or_init(|| Regex::new("(?is)</h1\\s*>").unwrap())
-        .replace_all(&html, "</h2>")
-        .to_string()
-}
-
 pub fn escape_html(value: &str) -> String {
     value
         .replace('&', "&amp;")
@@ -317,6 +284,7 @@ fn short_date(time: DateTime<Utc>) -> String {
 mod tests {
     use super::*;
     use crate::model::Story;
+    use crate::sanitize::{self, Region};
     use chrono::TimeZone;
 
     fn time() -> DateTime<Utc> {
@@ -327,7 +295,7 @@ mod tests {
         Comment {
             author: author.to_string(),
             time: time(),
-            html: html.to_string(),
+            html: sanitize::fragment(html, Region::CommentBody),
             depth,
             children,
         }
@@ -401,7 +369,10 @@ mod tests {
             0,
             vec![],
         )]);
-        book.story.text_html = Some("<h1>Selftext</h1><h2>Already smaller</h2>".to_string());
+        book.story.text_html = Some(sanitize::fragment(
+            "<h1>Selftext</h1><h2>Already smaller</h2>",
+            Region::DiscussionText,
+        ));
 
         let html = render_html(&book, 5);
 

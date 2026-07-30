@@ -81,9 +81,29 @@ when Reddit returns HTTP 403, so the extension is the more reliable route.
 Flatpak browsers generally cannot launch the native host; use the RPM/deb browser
 build for the extension.
 
+## Reading policy
+
+Extracted pages become passive reading documents. Every fragment of page HTML —
+comment bodies, selftext, article bodies — passes one sanitizer before it can
+become part of a book:
+
+- A positive allowlist decides what survives. Scripts, styles, embeds, frames,
+  form controls, and inline SVG are dropped; unrecognized tags are unwrapped so
+  their words remain.
+- Event handlers and `javascript:`/`data:` link targets are removed, keeping the
+  visible link text.
+- Inline `style` attributes and page classes are dropped, so `reader.css` alone
+  decides how a book looks.
+- Article footnote and section anchors are preserved but namespaced, so they
+  keep working without colliding with chapter and skip-link navigation.
+- Fragments are sanitized in isolation, so malformed markup in one comment
+  cannot restructure the rest of the book. If a book's chapter or skip-link
+  structure is inconsistent anyway, the build is refused rather than shipped.
+
 ## Limits
 
 - Images are bounded to 100 downloads, 20 MiB each, and 100 MiB total. JPEG,
   PNG, GIF, and WebP are supported; omitted images retain their alt text.
-- Extracted pages become passive reading documents: scripts, inline event
-  handlers, and unsafe link targets are removed.
+- Requests time out after 30s, under 16 MiB HTML and 32 MiB JSON body budgets.
+- Reddit threads are fetched at up to 500 comments; omitted reply counts are
+  shown inline.

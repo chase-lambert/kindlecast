@@ -1,9 +1,10 @@
 use super::tree::{FlatComment, build_comment_tree};
 use super::{
-    clean_body_html, desc_by_class, desc_by_name, desc_by_name_and_class, direct_child_by_class,
-    find_md_body, first_node, parse_more_count, parse_timestamp,
+    desc_by_class, desc_by_name, desc_by_name_and_class, direct_child_by_class, find_md_body,
+    first_node, parse_more_count, parse_timestamp,
 };
 use crate::model::{Book, BookBody, Story};
+use crate::sanitize::{self, Region};
 use anyhow::{Context, Result, bail};
 use chrono::Utc;
 use dom_query::Document;
@@ -86,8 +87,8 @@ pub(super) fn extract_old_reddit(doc: &Document, input_url: &str) -> Result<(Boo
         .find(|d| d.has_class("expando"))
         .and_then(|exp| find_md_body(&exp))
         .or_else(|| find_md_body(&link_el))
-        .map(|md| clean_body_html(md.inner_html().as_ref()))
-        .filter(|s| !s.trim().is_empty());
+        .map(|md| sanitize::fragment(md.inner_html().as_ref(), Region::DiscussionText))
+        .filter(|html| !html.is_empty());
 
     let discussion_url = if !permalink.is_empty() {
         if permalink.starts_with("https://") || permalink.starts_with("http://") {
@@ -138,7 +139,7 @@ pub(super) fn extract_old_reddit(doc: &Document, input_url: &str) -> Result<(Boo
         let body_html = comment_entry
             .as_ref()
             .and_then(find_md_body)
-            .map(|md| clean_body_html(md.inner_html().as_ref()))
+            .map(|md| sanitize::fragment(md.inner_html().as_ref(), Region::CommentBody))
             .unwrap_or_default();
 
         let time = comment_entry
@@ -152,7 +153,7 @@ pub(super) fn extract_old_reddit(doc: &Document, input_url: &str) -> Result<(Boo
         let is_deleted_empty = if comment_entry.is_none() && !comment_el.children().is_empty() {
             true
         } else {
-            author == "[deleted]" && body_html.trim().is_empty()
+            author == "[deleted]" && body_html.is_empty()
         };
 
         flat_comments.push(FlatComment {

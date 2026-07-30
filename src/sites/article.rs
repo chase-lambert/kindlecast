@@ -1,10 +1,10 @@
 use crate::model::{Book, BookBody, Story};
+use crate::sanitize::{self, Region};
 use crate::sites::{Site, agent_with_timeout, domain_label, fetch_html, is_http_url};
 use anyhow::{Result, bail};
 use chrono::{DateTime, Utc};
+use dom_query::Document;
 use dom_smoothie::{Config, Readability};
-use regex::Regex;
-use std::sync::OnceLock;
 
 const MIN_EXTRACTED_TEXT_CHARS: usize = 200;
 
@@ -60,8 +60,14 @@ fn extract_article(document: HtmlDocument) -> Result<Book> {
     let url = document.url;
     let article =
         Readability::new(document.html, Some(url.as_str()), Some(Config::default()))?.parse()?;
-    let content = article.content.trim().to_string();
-    let text_len = crate::util::strip_tags(&content).trim().chars().count();
+    // Sanitize before measuring. Readability output can carry 200+ characters
+    // inside elements the policy removes (`<select>`, `<script>`), which would
+    // otherwise pass this threshold and then vanish from the finished book.
+    let content = sanitize::fragment(article.content.trim(), Region::ArticleBody);
+    let text_len = crate::util::strip_tags(content.as_str())
+        .trim()
+        .chars()
+        .count();
     if text_len < MIN_EXTRACTED_TEXT_CHARS {
         bail!("article extraction found only {text_len} text chars; refusing to send a husk");
     }
@@ -101,18 +107,15 @@ fn non_empty(value: String) -> Option<String> {
     (!value.is_empty()).then(|| value.to_string())
 }
 
+/// `<title>` fallback when Readability finds no title.
+///
+/// Tree-based rather than pattern-based, so `<title>` attributes and stray `>`
+/// cannot confuse it. The parser also resolves entities, which the previous
+/// regex had to undo by hand.
 fn title_tag(html: &str) -> Option<String> {
-    static TITLE_RE: OnceLock<Regex> = OnceLock::new();
-    TITLE_RE
-        .get_or_init(|| Regex::new("(?is)<title[^>]*>(.*?)</title>").unwrap())
-        .captures(html)
-        .and_then(|captures| captures.get(1))
-        .map(|title| {
-            html_escape::decode_html_entities(title.as_str())
-                .trim()
-                .to_string()
-        })
-        .filter(|title| !title.is_empty())
+    let document = Document::from(html);
+    let title = document.select("title").text().trim().to_string();
+    (!title.is_empty()).then_some(title)
 }
 
 #[cfg(test)]
@@ -134,6 +137,12 @@ mod tests {
 
         assert!(matches!(book.body, crate::model::BookBody::Article));
         assert_eq!(book.source_slug, "example-com");
-        assert!(book.story.text_html.unwrap().contains("readable paragraph"));
+        assert!(
+            book.story
+                .text_html
+                .unwrap()
+                .as_str()
+                .contains("readable paragraph")
+        );
     }
 }
